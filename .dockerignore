@@ -1,0 +1,9 @@
+# Solo entra lo que copia el Dockerfile; todo lo demás se excluye.
+*
+!backend/requirements-server.txt
+!backend/bioyologic/**
+!models/*.onnx
+!models/*.json
+!app/build/web/**
+!LICENSE
+**/__pycache__

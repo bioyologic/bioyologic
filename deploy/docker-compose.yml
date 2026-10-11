@@ -1,0 +1,30 @@
+# Bioyologic en un servidor con HTTPS automático (Caddy + Let's Encrypt).
+#   cp .env.example .env    # y edita el dominio y la URL del código fuente
+#   docker compose up -d --build
+services:
+  bioyologic:
+    build: ..
+    image: bioyologic:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data              # base de datos e imágenes (copia de seguridad: backup.sh)
+    # Sin "ports": solo es accesible a través de Caddy.
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on: [bioyologic]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BIOYOLOGIC_DOMAIN: ${BIOYOLOGIC_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # certificados HTTPS
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,10 @@
+# Dependencias mínimas del servidor en producción (Docker / nube).
+# Usa los modelos ONNX (scripts/export_onnx.py): sin PyTorch ni Ultralytics, ~400 MB en vez de ~2 GB.
+numpy>=1.26
+opencv-python-headless>=4.9
+onnxruntime>=1.18
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+reportlab>=4.0

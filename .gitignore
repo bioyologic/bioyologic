@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Datos: no se publican (fotos de los datasets y análisis guardados)
+data/raw/
+data/yolo/
+data/store/
+captures/
+*.db
+
+# Modelos: se publican como release, no en git (los .json de configuración sí van)
+models/*.pt
+models/*.onnx
+models/*.tflite
+
+# Entrenamientos y compilaciones
+runs/
+dist/
+*.zip
+
+# Despliegue: secretos y datos del servidor
+deploy/.env
+deploy/data/

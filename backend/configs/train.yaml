@@ -1,0 +1,19 @@
+# Hiperparámetros de entrenamiento (Ultralytics). Se pueden sobrescribir por CLI.
+model: yolo11s.pt     # punto de partida preentrenado en COCO (n = más rápido, m = más preciso)
+data: ../../data/yolo/data.yaml   # relativo a este archivo
+epochs: 150
+imgsz: 640            # tamaño de los tiles generados por prepare_dataset.py --tile 640
+batch: 16
+patience: 30          # parada temprana si mAP no mejora
+optimizer: auto
+cos_lr: true
+# Aumentos de datos adaptados a placas de Petri: la orientación no tiene
+# significado biológico, así que se permiten volteos y rotaciones completas.
+fliplr: 0.5
+flipud: 0.5
+degrees: 180
+scale: 0.3
+mosaic: 1.0
+hsv_h: 0.01           # tono casi fijo: el color de la colonia es un descriptor
+hsv_s: 0.4
+hsv_v: 0.3

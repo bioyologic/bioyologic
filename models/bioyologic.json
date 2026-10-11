@@ -1,0 +1,12 @@
+{
+  "max_side": 2048,
+  "tile": 640,
+  "imgsz": 640,
+  "classes": [
+    "colony"
+  ],
+  "datasets": [
+    "makrai",
+    "clinical"
+  ]
+}

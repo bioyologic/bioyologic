@@ -1,0 +1,197 @@
+{
+ "pad": 0.3,
+ "imgsz": 160,
+ "classes": [
+  "Acinetobacter baumannii",
+  "Actinobacillus equuli",
+  "Actinobacillus pleuropneumoniae",
+  "Aeromonas hydrophila",
+  "Bacillus cereus",
+  "Bibersteinia trehalosi",
+  "Bordetella bronchiseptica",
+  "Brucella ovis",
+  "Burkholderia cepacia",
+  "Clostridium perfringens",
+  "Corynebacterium pseudotuberculosis",
+  "Corynebacterium striatum",
+  "Enterobacter cloacae",
+  "Enterococcus casseliflavus",
+  "Enterococcus faecium",
+  "Erysipelothrix rhusiopathiae",
+  "Escherichia coli",
+  "Glaesserella parasuis",
+  "Klebsiella pneumoniae",
+  "Listeria monocytogenes",
+  "Morganella morganii",
+  "Paenibacillus larvae",
+  "Pasteurella multocida",
+  "Proteus mirabilis",
+  "Pseudomonas aeruginosa",
+  "Pseudomonas putida",
+  "Rhodococcus equi",
+  "Salmonella enterica",
+  "Serratia marcescens",
+  "Staphylococcus aureus",
+  "Staphylococcus epidermidis",
+  "Staphylococcus hyicus",
+  "Stenotrophomonas maltophilia",
+  "Streptococcus agalactiae",
+  "Streptococcus pneumoniae",
+  "Streptococcus pyogenes",
+  "Trueperella pyogenes"
+ ],
+ "species_info": {
+  "Actinobacillus equuli": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Actinobacillus pleuropneumoniae": {
+   "gram": "-",
+   "agar": "chocolate"
+  },
+  "Aeromonas hydrophila": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Bacillus cereus": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Bibersteinia trehalosi": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Bordetella bronchiseptica": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Brucella ovis": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Clostridium perfringens": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Corynebacterium pseudotuberculosis": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Erysipelothrix rhusiopathiae": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Escherichia coli": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Glaesserella parasuis": {
+   "gram": "-",
+   "agar": "chocolate"
+  },
+  "Klebsiella pneumoniae": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Listeria monocytogenes": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Paenibacillus larvae": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Pasteurella multocida": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Proteus mirabilis": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Pseudomonas aeruginosa": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Rhodococcus equi": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Salmonella enterica": {
+   "gram": "-",
+   "agar": "Salmonella-Shigella"
+  },
+  "Staphylococcus aureus": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Staphylococcus hyicus": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Streptococcus agalactiae": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Trueperella pyogenes": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Acinetobacter baumannii": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Serratia marcescens": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Staphylococcus epidermidis": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Enterococcus faecium": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Stenotrophomonas maltophilia": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Enterococcus casseliflavus": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Enterobacter cloacae": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Corynebacterium striatum": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Morganella morganii": {
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "Streptococcus pyogenes": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Pseudomonas putida": {
+   "gram": "-",
+   "agar": "blood"
+  },
+  "Streptococcus pneumoniae": {
+   "gram": "+",
+   "agar": "blood"
+  },
+  "Burkholderia cepacia": {
+   "gram": "-",
+   "agar": "MacConkey"
+  }
+ },
+ "datasets": [
+  "makrai",
+  "clinical"
+ ]
+}

@@ -1,0 +1,262 @@
+{
+ "source": {
+  "makrai": "Makrai et al. 2023, Sci Data 10:497 (tabla 1)",
+  "clinical": "Clinical Dataset of 19 Bacterial Colony Images, doi:10.5281/zenodo.18256864 (tabla 1)"
+ },
+ "codes": {
+  "makrai:sp01": {
+   "species": "Actinobacillus equuli",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp02": {
+   "species": "Actinobacillus pleuropneumoniae",
+   "gram": "-",
+   "agar": "chocolate"
+  },
+  "makrai:sp03": {
+   "species": "Aeromonas hydrophila",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp04": {
+   "species": "Bacillus cereus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp05": {
+   "species": "Bibersteinia trehalosi",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp06": {
+   "species": "Bordetella bronchiseptica",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp07": {
+   "species": "Brucella ovis",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp08": {
+   "species": "Clostridium perfringens",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp09": {
+   "species": "Corynebacterium pseudotuberculosis",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp10": {
+   "species": "Erysipelothrix rhusiopathiae",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp11": {
+   "species": "Escherichia coli",
+   "gram": "-",
+   "agar": "nutrient"
+  },
+  "makrai:sp12": {
+   "species": "Glaesserella parasuis",
+   "gram": "-",
+   "agar": "chocolate"
+  },
+  "makrai:sp13": {
+   "species": "Klebsiella pneumoniae",
+   "gram": "-",
+   "agar": "blood, nutrient"
+  },
+  "makrai:sp14": {
+   "species": "Listeria monocytogenes",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp15": {
+   "species": "Paenibacillus larvae",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp16": {
+   "species": "Pasteurella multocida",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp17": {
+   "species": "Proteus mirabilis",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "makrai:sp18": {
+   "species": "Pseudomonas aeruginosa",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "makrai:sp19": {
+   "species": "Rhodococcus equi",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp20": {
+   "species": "Salmonella enterica",
+   "gram": "-",
+   "agar": "nutrient"
+  },
+  "makrai:sp21": {
+   "species": "Staphylococcus aureus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp22": {
+   "species": "Staphylococcus hyicus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp23": {
+   "species": "Streptococcus agalactiae",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "makrai:sp24": {
+   "species": "Trueperella pyogenes",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:aba": {
+   "species": "Acinetobacter baumannii",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:eco": {
+   "species": "Escherichia coli",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "clinical:kpn": {
+   "species": "Klebsiella pneumoniae",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:sau": {
+   "species": "Staphylococcus aureus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:ses": {
+   "species": "Salmonella enterica",
+   "gram": "-",
+   "agar": "Salmonella-Shigella"
+  },
+  "clinical:sma": {
+   "species": "Serratia marcescens",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:sep": {
+   "species": "Staphylococcus epidermidis",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:efa": {
+   "species": "Enterococcus faecium",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:stm": {
+   "species": "Stenotrophomonas maltophilia",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:eca": {
+   "species": "Enterococcus casseliflavus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:enc": {
+   "species": "Enterobacter cloacae",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:cst": {
+   "species": "Corynebacterium striatum",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:mmo": {
+   "species": "Morganella morganii",
+   "gram": "-",
+   "agar": "MacConkey"
+  },
+  "clinical:bce": {
+   "species": "Bacillus cereus",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:spy": {
+   "species": "Streptococcus pyogenes",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:sag": {
+   "species": "Streptococcus agalactiae",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:ppu": {
+   "species": "Pseudomonas putida",
+   "gram": "-",
+   "agar": "blood"
+  },
+  "clinical:spn": {
+   "species": "Streptococcus pneumoniae",
+   "gram": "+",
+   "agar": "blood"
+  },
+  "clinical:bcp": {
+   "species": "Burkholderia cepacia",
+   "gram": "-",
+   "agar": "MacConkey"
+  }
+ },
+ "species": [
+  "Acinetobacter baumannii",
+  "Actinobacillus equuli",
+  "Actinobacillus pleuropneumoniae",
+  "Aeromonas hydrophila",
+  "Bacillus cereus",
+  "Bibersteinia trehalosi",
+  "Bordetella bronchiseptica",
+  "Brucella ovis",
+  "Burkholderia cepacia",
+  "Clostridium perfringens",
+  "Corynebacterium pseudotuberculosis",
+  "Corynebacterium striatum",
+  "Enterobacter cloacae",
+  "Enterococcus casseliflavus",
+  "Enterococcus faecium",
+  "Erysipelothrix rhusiopathiae",
+  "Escherichia coli",
+  "Glaesserella parasuis",
+  "Klebsiella pneumoniae",
+  "Listeria monocytogenes",
+  "Morganella morganii",
+  "Paenibacillus larvae",
+  "Pasteurella multocida",
+  "Proteus mirabilis",
+  "Pseudomonas aeruginosa",
+  "Pseudomonas putida",
+  "Rhodococcus equi",
+  "Salmonella enterica",
+  "Serratia marcescens",
+  "Staphylococcus aureus",
+  "Staphylococcus epidermidis",
+  "Staphylococcus hyicus",
+  "Stenotrophomonas maltophilia",
+  "Streptococcus agalactiae",
+  "Streptococcus pneumoniae",
+  "Streptococcus pyogenes",
+  "Trueperella pyogenes"
+ ]
+}

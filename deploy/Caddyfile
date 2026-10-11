@@ -1,0 +1,11 @@
+# Caddy obtiene y renueva solo el certificado HTTPS de Let's Encrypt para el dominio.
+{$BIOYOLOGIC_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 20MB
+	}
+	reverse_proxy bioyologic:8000 {
+		# IP real del cliente para el límite de análisis por minuto (la API lee X-Real-IP).
+		header_up X-Real-IP {remote_host}
+	}
+}

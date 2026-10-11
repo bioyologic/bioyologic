@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "Si usas Bioyologic en un trabajo, cítalo así."
+title: "Bioyologic: sistema híbrido de conteo y caracterización de colonias bacterianas en placas de Petri"
+type: software
+authors:
+  - given-names: "Juan José"
+    family-names: "Martínez"
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/Godjuanjo/bioyologic"
+version: 0.1.0
+date-released: 2026-10-11
+keywords:
+  - microbiología
+  - colonias bacterianas
+  - placas de Petri
+  - YOLO
+  - visión por computador
+  - Flutter
+references:
+  - type: dataset
+    title: "Dataset de colonias bacterianas anotadas de Makrai et al. (2023), Scientific Data 10:497"
+    authors:
+      - name: "Makrai et al."
+    year: 2023
+    doi: 10.6084/m9.figshare.22022540
+    license: CC-BY-4.0
+  - type: dataset
+    title: "Clinical Dataset of 19 Bacterial Colony Images"
+    authors:
+      - name: "Autores del dataset en Zenodo"
+    doi: 10.5281/zenodo.18256864
+    license: CC-BY-4.0

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pantalla de arranque nativa: fondo verde Bioyologic con el icono centrado -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/bio_green" />
+    <item android:gravity="center" android:width="120dp" android:height="120dp"
+        android:drawable="@mipmap/ic_launcher" />
+</layer-list>
