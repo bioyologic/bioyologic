@@ -142,9 +142,24 @@ def main() -> None:
         log(f"Imagen: {image.display_name}")
         ssh_key = Path(args.ssh_key).expanduser().read_text().strip()
 
+        def find_existing():
+            return [i for i in compute.list_instances(tenancy, display_name=NAME).data
+                    if i.lifecycle_state not in ("TERMINATED", "TERMINATING")]
+
         attempt, inst = 0, None
         while inst is None:
             attempt += 1
+            try:
+                # Por si un intento anterior la creó pero se perdió la respuesta.
+                found = find_existing()
+            except (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout, oci.exceptions.ServiceError) as e:
+                log(f"Sin conexión con Oracle ({type(e).__name__}); reintento en 1 min")
+                time.sleep(60)
+                continue
+            if found:
+                inst = found[0]
+                log(f"La instancia ya existe ({inst.lifecycle_state}).")
+                break
             for ad in ads:
                 for ocpus, mem in SIZES:
                     try:
@@ -158,6 +173,8 @@ def main() -> None:
                                       "user_data": base64.b64encode(CLOUD_INIT.encode()).decode()})).data
                         log(f"¡Conseguida! {ocpus} OCPU, {mem} GB en {ad}")
                         break
+                    except (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout) as e:
+                        log(f"Intento {attempt}: fallo de red ({type(e).__name__}); se reintenta")
                     except oci.exceptions.ServiceError as e:
                         if e.status in (500, 503) or "capacity" in str(e.message).lower():
                             log(f"Intento {attempt}: sin capacidad ({ocpus} OCPU / {mem} GB)")
