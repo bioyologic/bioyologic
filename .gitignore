@@ -25,4 +25,4 @@ dist/
 deploy/.env
 deploy/data/
 deploy/.oracle_ip
-deploy/oracle_retry.log
+deploy/oracle_retry*.log

@@ -119,9 +119,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ssh-key", default=str(Path.home() / ".ssh" / "bioyologic_oracle.pub"))
     ap.add_argument("--every", type=int, default=60, help="segundos entre intentos")
+    ap.add_argument("--profile", default="DEFAULT", help="perfil de ~/.oci/config (una cuenta de Oracle por perfil)")
     args = ap.parse_args()
 
-    config = oci.config.from_file()
+    config = oci.config.from_file(profile_name=args.profile)
+    log(f"Cuenta: perfil {args.profile}, región {config['region']}")
     oci.config.validate_config(config)
     tenancy = config["tenancy"]
     compute = oci.core.ComputeClient(config)
@@ -201,7 +203,7 @@ def main() -> None:
     ip = public_ip(compute, net, tenancy, inst.id)
     log(f"Instancia en marcha. IP pública: {ip}")
     log(f"Conéctate con: ssh -i ~/.ssh/bioyologic_oracle ubuntu@{ip}")
-    (Path(__file__).with_name(".oracle_ip")).write_text(f"{ip}\n")
+    (Path(__file__).with_name(".oracle_ip")).write_text(f"{ip} {args.profile} {config['region']}\n")
 
 
 if __name__ == "__main__":
