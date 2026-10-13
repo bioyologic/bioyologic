@@ -41,7 +41,8 @@ runcmd:
 """
 
 # Primero el tamaño completo gratuito; si no hay hueco, uno más pequeño (más fácil de conseguir).
-SIZES = [(2, 12), (1, 6)]
+# Tamaños más pequeños caben más fácil en los huecos que libera Oracle (Bioyologic usa ~1,2 GB).
+SIZES = [(2, 12), (1, 6), (1, 4)]
 
 
 def log(msg: str) -> None:
@@ -117,7 +118,7 @@ def patiently(fn, *args, tries: int = 20):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ssh-key", default=str(Path.home() / ".ssh" / "bioyologic_oracle.pub"))
-    ap.add_argument("--every", type=int, default=180, help="segundos entre intentos")
+    ap.add_argument("--every", type=int, default=60, help="segundos entre intentos")
     args = ap.parse_args()
 
     config = oci.config.from_file()
@@ -134,6 +135,9 @@ def main() -> None:
         log(f"La instancia ya existe ({inst.lifecycle_state}).")
     else:
         ads = [a.name for a in patiently(identity.list_availability_domains, tenancy).data]
+        # Cada intento prueba un dominio de fallo distinto (o ninguno): a veces uno concreto tiene hueco.
+        fds = {ad: [None] + [f.name for f in patiently(lambda: identity.list_fault_domains(tenancy, ad)).data]
+               for ad in ads}
         vcn, subnet = patiently(ensure_network, net, tenancy)
         patiently(open_web_ports, net, subnet)
         image = patiently(lambda: compute.list_images(
@@ -161,23 +165,25 @@ def main() -> None:
                 log(f"La instancia ya existe ({inst.lifecycle_state}).")
                 break
             for ad in ads:
+                fd = fds[ad][attempt % len(fds[ad])]
+                where = fd.split("-")[-2] + "-" + fd.split("-")[-1] if fd else "cualquier dominio"
                 for ocpus, mem in SIZES:
                     try:
                         inst = compute.launch_instance(m.LaunchInstanceDetails(
-                            availability_domain=ad, compartment_id=tenancy, display_name=NAME, shape=SHAPE,
+                            availability_domain=ad, fault_domain=fd, compartment_id=tenancy, display_name=NAME, shape=SHAPE,
                             shape_config=m.LaunchInstanceShapeConfigDetails(ocpus=ocpus, memory_in_gbs=mem),
                             source_details=m.InstanceSourceViaImageDetails(image_id=image.id,
                                                                            boot_volume_size_in_gbs=50),
                             create_vnic_details=m.CreateVnicDetails(subnet_id=subnet.id, assign_public_ip=True),
                             metadata={"ssh_authorized_keys": ssh_key,
                                       "user_data": base64.b64encode(CLOUD_INIT.encode()).decode()})).data
-                        log(f"¡Conseguida! {ocpus} OCPU, {mem} GB en {ad}")
+                        log(f"¡Conseguida! {ocpus} OCPU, {mem} GB en {ad} ({where})")
                         break
                     except (oci.exceptions.RequestException, oci.exceptions.ConnectTimeout) as e:
                         log(f"Intento {attempt}: fallo de red ({type(e).__name__}); se reintenta")
                     except oci.exceptions.ServiceError as e:
                         if e.status in (500, 503) or "capacity" in str(e.message).lower():
-                            log(f"Intento {attempt}: sin capacidad ({ocpus} OCPU / {mem} GB)")
+                            log(f"Intento {attempt}: sin capacidad ({ocpus} OCPU / {mem} GB, {where})")
                         elif e.status == 401:
                             log("Clave API aún activándose (401)")
                         elif e.status == 429:
@@ -188,7 +194,7 @@ def main() -> None:
                 if inst:
                     break
             if inst is None:
-                time.sleep(args.every + random.randint(0, 30))
+                time.sleep(args.every + random.randint(0, 15))
 
     inst = oci.wait_until(compute, compute.get_instance(inst.id), "lifecycle_state", "RUNNING",
                           max_wait_seconds=900).data
