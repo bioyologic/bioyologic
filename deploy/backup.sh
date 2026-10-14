@@ -11,7 +11,7 @@ mkdir -p "$DEST"
 docker compose exec -T bioyologic python -c \
   "import sqlite3; s=sqlite3.connect('/data/bioyologic.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d); d.close()"
 tar -czf "$DEST/bioyologic-$STAMP.tar.gz" --exclude=bioyologic.db -C data .
-rm -f data/backup.db
+docker compose exec -T bioyologic rm -f /data/backup.db
 # Conserva las copias de los últimos 14 días.
 find "$DEST" -name 'bioyologic-*.tar.gz' -mtime +14 -delete
 echo "Copia creada: $DEST/bioyologic-$STAMP.tar.gz"
