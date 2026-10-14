@@ -11,9 +11,7 @@ data/store/
 captures/
 *.db
 
-# Modelos: se publican como release, no en git (los .json de configuración sí van)
-models/*.pt
-models/*.onnx
+# Modelos: los .pt y .onnx van en git con Git LFS (ver .gitattributes)
 models/*.tflite
 
 # Entrenamientos y compilaciones
@@ -26,3 +24,4 @@ deploy/.env
 deploy/data/
 deploy/.oracle_ip
 deploy/oracle_retry*.log
+.vscode/

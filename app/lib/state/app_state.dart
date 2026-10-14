@@ -19,10 +19,15 @@ class AppState extends ChangeNotifier {
   /// Repositorio del código fuente (AGPL-3.0). El servidor puede indicar otro en /about.
   static const sourceUrl = String.fromEnvironment('BIOYOLOGIC_SOURCE', defaultValue: 'https://github.com/Godjuanjo/bioyologic');
 
+  /// Servidor público de Bioyologic (Oracle Cloud, HTTPS).
+  static const cloudServer = 'https://bioyologic.duckdns.org';
+
   static String get defaultServer {
     if (_builtInServer.isNotEmpty) return _builtInServer;
     // En web la app se sirve desde la propia API (/app), así que el servidor es el mismo origen.
     if (kIsWeb) return Uri.base.origin;
+    // La versión publicada usa la nube; en desarrollo, el servidor del PC.
+    if (!kDebugMode) return cloudServer;
     // 10.0.2.2 es el localhost del PC visto desde el emulador de Android.
     if (defaultTargetPlatform == TargetPlatform.android) return 'http://10.0.2.2:8000';
     return 'http://localhost:8000';

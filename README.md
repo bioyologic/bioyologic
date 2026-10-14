@@ -2,6 +2,8 @@
 
 Sistema híbrido de conteo y caracterización de colonias bacterianas en placas de Petri a partir de una foto.
 
+**En línea:** app web en **https://bioyologic.duckdns.org/app/** · servidor en Oracle Cloud (Always Free, Fráncfort) · app Android en `dist/Bioyologic.apk`
+
 **Software libre** bajo [AGPL-3.0-or-later](LICENSE) · [Licencias de terceros](THIRD_PARTY_LICENSES.md) · [Ficha de los modelos](docs/model_card.md) · [Privacidad](docs/privacidad.md) · [Cómo contribuir](CONTRIBUTING.md)
 
 **Híbrido** = un detector de aprendizaje profundo (YOLO) localiza cada colonia, y técnicas clásicas de visión por computador (segmentación por contraste de color en L\*a\*b\*, Otsu, análisis de contornos) miden su morfología dentro de cada detección.
@@ -40,7 +42,7 @@ Bioyologic/
 │   ├── scripts/         prepare_dataset, train, export_onnx, analyze_image, evaluate_counts, seed_demo
 │   └── tests/
 ├── app/                 App Flutter
-├── models/              bioyologic(.pt|.onnx) y bioyologic_species(.pt|.onnx) + .json
+├── models/              bioyologic(.pt|.onnx) y bioyologic_species(.pt|.onnx) + .json (Git LFS)
 ├── deploy/              Servidor en la nube: Docker Compose + Caddy (HTTPS) + copias de seguridad
 ├── docs/                Documento, figuras, ficha de los modelos, privacidad y plan
 └── data/                store/ (BD e imágenes), raw/samples (fotos reales de ejemplo), demo_photos/

@@ -29,7 +29,7 @@ SHAPE = "VM.Standard.A1.Flex"
 # Configuración automática al primer arranque (cloud-init): Docker, firewall, swap y el código.
 CLOUD_INIT = """#cloud-config
 package_update: true
-packages: [docker.io, docker-compose-v2, git]
+packages: [docker.io, docker-compose-v2, git, git-lfs]
 runcmd:
   - usermod -aG docker ubuntu
   - iptables -I INPUT 6 -p tcp -m multiport --dports 80,443 -j ACCEPT
@@ -37,6 +37,7 @@ runcmd:
   - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
   - sudo -u ubuntu git clone https://github.com/Godjuanjo/bioyologic.git /home/ubuntu/bioyologic
+  - cd /home/ubuntu/bioyologic && sudo -u ubuntu git lfs pull
   - touch /home/ubuntu/.bioyologic-ready
 """
 

@@ -87,8 +87,8 @@ class HelpScreen extends StatelessWidget {
             'Hay más de 300 colonias: siembra una dilución mayor. Con menos de 30 colonias el resultado es solo '
                 'orientativo.'),
         ('No conecta con el servidor',
-            'En Configuración → Servidor, comprueba la dirección. En un móvil real usa la IP del PC '
-                '(http://<IP>:8000) en la misma red Wi-Fi, o la dirección https:// del servidor en la nube.'),
+            'Comprueba tu conexión a internet. La app usa el servidor de Bioyologic en la nube '
+                '(https://bioyologic.duckdns.org); puedes verlo o cambiarlo en Configuración → Servidor.'),
       ]);
 }
 

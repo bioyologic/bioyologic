@@ -29,7 +29,7 @@ Al contribuir, aceptas que tu aporte se publique bajo la licencia AGPL-3.0-or-la
 
 ## Datos y privacidad
 
-No subas al repositorio fotos de pacientes, datos personales ni la carpeta `data/store`. Los modelos (`*.pt`, `*.onnx`) se publican como *releases*, no dentro de git.
+No subas al repositorio fotos de pacientes, datos personales ni la carpeta `data/store`. Los modelos (`*.pt`, `*.onnx`) van en el repositorio con **Git LFS**: instala Git LFS (`git lfs install`) antes de clonar para descargarlos.
 
 ## Conducta
 

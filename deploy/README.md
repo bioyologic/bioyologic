@@ -13,7 +13,7 @@ Internet ──HTTPS──▶ Caddy (certificado de Let's Encrypt) ──▶ API
 cd app && flutter build web --base-href /app/            # app web en /app
 ```
 
-Sube el proyecto al servidor (con `git clone` desde el repositorio público, o con `scp`). Los modelos `.onnx` y `.json` y `app/build/web` deben estar en el servidor porque no van en git: súbelos con `scp` o descárgalos del *release*.
+El servidor descarga el proyecto con `git clone`. Los modelos `.onnx` y `.json` vienen en el repositorio (con Git LFS: `sudo apt install git-lfs && git lfs pull`). La app web (`app/build/web`) no va en git: súbela con `scp -r app/build/web ubuntu@IP:~/bioyologic/app/build/`.
 
 ## 1. Crear la máquina virtual (lo haces tú en la consola de Oracle)
 

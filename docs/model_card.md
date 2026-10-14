@@ -8,6 +8,7 @@ Bioyologic usa dos modelos en cadena. El **detector** encuentra cada colonia de 
 | Arquitectura | YOLO11s (detección), 1 clase: `colony` | YOLO11s-cls (clasificación), 37 especies |
 | Entrada | Teselas de 640 px; la foto se reduce antes a un lado máximo de 2048 px | Recorte cuadrado de 160 px con un margen del 30 % alrededor de la colonia |
 | Entrenamiento | `training/Bioyologic_entrenamiento.ipynb` (Google Colab, GPU T4) | `training/Bioyologic_especies.ipynb` (Google Colab, GPU T4) |
+| Dónde están | En el repositorio de GitHub, carpeta `models/` (Git LFS) | Igual |
 | Licencia | AGPL-3.0 (derivado de Ultralytics), con atribución CC BY 4.0 a los datos | Igual |
 
 ## Datos de entrenamiento
