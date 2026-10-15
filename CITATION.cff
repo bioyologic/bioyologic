@@ -6,7 +6,7 @@ authors:
   - given-names: "Juan José"
     family-names: "Martínez"
 license: AGPL-3.0-or-later
-repository-code: "https://github.com/Godjuanjo/bioyologic"
+repository-code: "https://github.com/bioyologic/bioyologic"
 version: 0.1.0
 date-released: 2026-10-11
 keywords:

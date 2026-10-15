@@ -53,7 +53,7 @@ DEFAULT_DATA = ROOT / "data" / "store"
 WEB_BUILD = Path(os.environ.get("BIOYOLOGIC_WEB", ROOT / "app" / "build" / "web"))
 MAX_UPLOAD_MB = float(os.environ.get("BIOYOLOGIC_MAX_UPLOAD_MB", "15"))
 RATE_LIMIT = int(os.environ.get("BIOYOLOGIC_RATE_LIMIT", "20"))
-SOURCE_URL = os.environ.get("BIOYOLOGIC_SOURCE_URL", "https://github.com/Godjuanjo/bioyologic")
+SOURCE_URL = os.environ.get("BIOYOLOGIC_SOURCE_URL", "https://github.com/bioyologic/bioyologic")
 LICENSE = "AGPL-3.0-or-later"
 
 app = FastAPI(title="Bioyologic API", version=__version__,

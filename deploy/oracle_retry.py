@@ -36,7 +36,7 @@ runcmd:
   - netfilter-persistent save
   - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   - echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  - sudo -u ubuntu git clone https://github.com/Godjuanjo/bioyologic.git /home/ubuntu/bioyologic
+  - sudo -u ubuntu git clone https://github.com/bioyologic/bioyologic.git /home/ubuntu/bioyologic
   - cd /home/ubuntu/bioyologic && sudo -u ubuntu git lfs pull
   - touch /home/ubuntu/.bioyologic-ready
 """

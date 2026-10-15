@@ -41,7 +41,7 @@ sudo usermod -aG docker $USER && newgrp docker
 sudo iptables -I INPUT 6 -p tcp -m multiport --dports 80,443 -j ACCEPT
 sudo netfilter-persistent save
 
-git clone https://github.com/Godjuanjo/bioyologic.git && cd bioyologic
+git clone https://github.com/bioyologic/bioyologic.git && cd bioyologic
 # copia aquí models/*.onnx, models/*.json y app/build/web
 cd deploy
 cp .env.example .env && nano .env        # dominio y URL del código fuente

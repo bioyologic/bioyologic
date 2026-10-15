@@ -17,7 +17,7 @@ class AppState extends ChangeNotifier {
   static const _builtInServer = String.fromEnvironment('BIOYOLOGIC_SERVER');
 
   /// Repositorio del código fuente (AGPL-3.0). El servidor puede indicar otro en /about.
-  static const sourceUrl = String.fromEnvironment('BIOYOLOGIC_SOURCE', defaultValue: 'https://github.com/Godjuanjo/bioyologic');
+  static const sourceUrl = String.fromEnvironment('BIOYOLOGIC_SOURCE', defaultValue: 'https://github.com/bioyologic/bioyologic');
 
   /// Servidor público de Bioyologic (Oracle Cloud, HTTPS).
   static const cloudServer = 'https://bioyologic.duckdns.org';
