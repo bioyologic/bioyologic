@@ -58,6 +58,11 @@ def _verbo(n: int, uno: str, varios: str) -> str:
     return f"se {uno if n == 1 else varios} {n}"
 
 
+def _leyenda(quitadas: int, agregadas: int) -> str:
+    partes = (["tachadas en rojo las quitadas"] if quitadas else []) + (["en naranja las agregadas"] if agregadas else [])
+    return f"En la imagen: {', '.join(partes)}." if partes else ""
+
+
 def _fecha(iso: str) -> str:
     return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M")
 
@@ -119,7 +124,7 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
                             topMargin=16 * mm, bottomMargin=18 * mm,
-                            title=f"Bioyologic - {analysis['sample_name']}")
+                            title=analysis["sample_name"], author="Bioyologic")
     ss = getSampleStyleSheet()
     h1 = ParagraphStyle("h1", parent=ss["Title"], textColor=GREEN, alignment=0, fontSize=20)
     h2 = ParagraphStyle("h2", parent=ss["Heading2"], textColor=GREEN, fontSize=12, spaceBefore=8)
@@ -168,11 +173,14 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
     ]
     corr = analysis.get("correction")
     if corr:
+        cambios = [t for n, t in ((len(corr["removed"]), _verbo(len(corr["removed"]), "quitó", "quitaron")),
+                                  (len(corr["added"]), _verbo(len(corr["added"]), "agregó", "agregaron"))) if n]
+        quien = corr.get("by") or ""
+        # Correcciones antiguas guardaban el correo: no se imprime (dato personal en un PDF que se comparte).
+        quien = f"por {_txt(quien)}, " if quien and "@" not in quien else ""
         rows.insert(1, ["Corrección manual", Paragraph(
-            f"El modelo detectó {corr['detected_total']}; {_verbo(len(corr['removed']), 'quitó', 'quitaron')} y "
-            f"{_verbo(len(corr['added']), 'agregó', 'agregaron')} a mano "
-            f"({_txt(corr.get('by') or 'usuario')}, {_fecha(corr['at'])}). "
-            "En la imagen: tachadas en rojo las quitadas, en naranja las agregadas.", cell)])
+            f"El modelo detectó {corr['detected_total']}; {' y '.join(cambios) or 'sin cambios'} a mano "
+            f"({quien}{_fecha(corr['at'])}). " + _leyenda(len(corr["removed"]), len(corr["added"])), cell)])
     story += [*titulo("Resumen"), _table(rows, [0.36, 0.64], header=False)]
 
     sp = analysis.get("species")

@@ -34,7 +34,7 @@ def test_manual_correction_recounts_and_is_traceable(ctx):
     assert c["summary"]["cfu_per_ml"] == pytest.approx((n - 1) / 1e-4)
     assert c["correction"]["detected_total"] == n
     assert c["correction"]["removed"] == ids[:2] and len(c["correction"]["added"]) == 1
-    assert c["correction"]["by"] == "ana@lab.co"
+    assert c["correction"]["by"] == "Ana Pérez"  # el nombre, no el correo
     assert [col["id"] for col in c["removed_colonies"]] == ids[:2]
     manual = [col for col in c["colonies"] if col.get("manual")]
     assert len(manual) == 1 and manual[0]["morphology"]["diameter_px"] > 0
@@ -175,6 +175,11 @@ def test_report_with_special_characters_and_accents(ctx):
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
     disp = r.headers["content-disposition"]
     assert disp.isascii() and "filename*=UTF-8''" in disp and "%C3%A9" in disp
+    # El PDF se llama como el análisis (sin los caracteres que los sistemas no admiten en archivos)
+    a2 = client.get(f"/analyses/{a['id']}").json()
+    assert "/report/R%C3%A9plica%202%20%26%20%C3%B1and%C3%BA%20%C2%B7%20P01.pdf?key=" in a2["report_url"]
+    assert "filename*=UTF-8''R%C3%A9plica%202%20%26%20%C3%B1and%C3%BA%20%C2%B7%20P01.pdf" in disp
+    assert client.get(a2["report_url"]).content[:4] == b"%PDF"
 
 
 def test_report_helpers():
@@ -182,3 +187,10 @@ def test_report_helpers():
     assert _txt("a <b> & c\nd") == "a &lt;b&gt; &amp; c<br/>d"
     assert _dilucion(1e-4) == "1 × 10<super>-4</super>" and _dilucion(0.25) == "0,25"
     assert _verbo(1, "quitó", "quitaron") == "se quitó 1" and _verbo(2, "quitó", "quitaron") == "se quitaron 2"
+
+
+def test_pdf_name():
+    from bioyologic.api.main import pdf_name
+    assert pdf_name("prueba e coli") == "prueba e coli.pdf"
+    assert pdf_name("Caja 1/2: agua?") == "Caja 1 2 agua.pdf"
+    assert pdf_name("   ") == "analisis.pdf"

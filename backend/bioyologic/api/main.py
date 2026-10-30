@@ -150,7 +150,7 @@ def _with_urls(a: dict) -> dict:
     a["image_urls"] = {k: f"/analyses/{aid}/image/{k}?key={key}" for k in IMAGE_KINDS}
     if version:
         a["image_urls"]["annotated"] += f"&v={version}"
-    a["report_url"] = f"/analyses/{aid}/report.pdf?key={key}"
+    a["report_url"] = f"/analyses/{aid}/report/{quote(pdf_name(a['sample_name']))}?key={key}"
     return a
 
 
@@ -566,7 +566,7 @@ def correct_colonies(analysis_id: int, body: Correction, store: Store = Depends(
     if set(body.removed) - detected_ids:
         raise HTTPException(422, "Hay colonias para quitar que no existen en este análisis")
     new, annotated = recount(image, result, set(body.removed), [(c.x, c.y, c.r) for c in body.added],
-                             a["dilution"], a["volume_ml"], by=user["email"])
+                             a["dilution"], a["volume_ml"], by=user["name"])
     return _with_urls(store.save_result(analysis_id, user["id"], new, annotated))
 
 
@@ -590,14 +590,28 @@ def analysis_image(analysis_id: int, kind: str, key: str = "", store: Store = De
                         headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
+_NO_VALIDOS = set('\\/:*?"<>|')
+
+
+def pdf_name(sample_name: str) -> str:
+    """Nombre del archivo PDF = nombre del análisis ("prueba e coli" -> "prueba e coli.pdf").
+
+    Solo se quitan los caracteres que Windows, Android o macOS no aceptan en un nombre de archivo.
+    """
+    limpio = "".join(" " if ch in _NO_VALIDOS or ord(ch) < 32 else ch for ch in sample_name)
+    limpio = " ".join(limpio.split()).strip(" .")[:100] or "analisis"
+    return f"{limpio}.pdf"
+
+
 def _pdf_disposition(sample_name: str) -> str:
-    """Nombre del PDF descargado. Las cabeceras HTTP solo admiten ASCII: un nombre sin tildes para todos los
-    navegadores y el nombre con tildes en `filename*` (RFC 6266) para los que lo entienden."""
-    limpio = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in sample_name)
-    ascii_ = unicodedata.normalize("NFKD", limpio).encode("ascii", "ignore").decode() or "analisis"
-    return f"inline; filename=\"Bioyologic_{ascii_}.pdf\"; filename*=UTF-8''{quote(f'Bioyologic_{limpio}.pdf')}"
+    """Cabecera de descarga. Las cabeceras HTTP solo admiten ASCII: un nombre sin tildes para todos los
+    navegadores y el nombre exacto, con tildes, en `filename*` (RFC 6266) para los que lo entienden."""
+    nombre = pdf_name(sample_name)
+    ascii_ = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().replace('"', "") or "analisis.pdf"
+    return f"inline; filename=\"{ascii_}\"; filename*=UTF-8''{quote(nombre)}"
 
 
+@app.get("/analyses/{analysis_id}/report/{filename}")
 @app.get("/analyses/{analysis_id}/report.pdf")
 def analysis_report(analysis_id: int, key: str = "", store: Store = Depends(get_store)) -> Response:
     a = _require(store.get_analysis_by_key(analysis_id, key), "Análisis")
