@@ -115,6 +115,6 @@ def test_delete_many_only_own_analyses(ctx, tmp_path):
     r = client.post("/analyses/delete", json={"ids": [ids[0], ids[1], ajeno, 9999]})
     assert r.json() == {"deleted": 2}  # el ajeno y el inexistente se ignoran
     assert [a["id"] for a in client.get("/analyses").json()] == [ids[2]]
-    assert not list((tmp_path / "images").glob(f"{ids[0]}_*"))  # sus fotos también se borran
+    assert {x["id"] for x in client.get("/trash").json()} == {ids[0], ids[1]}  # van a la papelera
     assert otro.get(f"/analyses/{ajeno}").status_code == 200
     assert client.post("/analyses/delete", json={"ids": []}).status_code == 422

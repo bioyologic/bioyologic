@@ -63,5 +63,6 @@ cd app && flutter test
 | `GET/POST /projects/{id}/members` · `PATCH/DELETE /projects/{id}/members/{user_id}` | Equipo del proyecto: invitar por correo, cambiar rol, quitar o salir |
 | `POST /analyses/{id}/review` · `GET /analyses?to_review=true` | Aprobar o devolver el análisis de otro miembro; cola de pendientes |
 | `GET/POST /incubations` · `PATCH/DELETE /incubations/{id}` | Siembras en incubación (recordatorio de lectura; `incubation_id` al analizar) |
+| `GET /trash` · `POST /trash/restore` · `POST /trash/purge` | Papelera: borrar un análisis lo guarda 30 días; recuperar o eliminar definitivamente (sin `ids`: todos) |
 | `GET /library` | Biblioteca de microorganismos y protocolos |
 | `GET /about` | Licencia, código fuente, datasets y contacto de datos personales |

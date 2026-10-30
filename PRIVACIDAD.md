@@ -38,7 +38,7 @@ Puedes conocer, actualizar, rectificar y suprimir tus datos, y revocar esta auto
 
 ## Conservación
 
-Tus datos se guardan mientras tengas la cuenta. Al eliminarla se borran de inmediato del servidor; las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.
+Tus datos se guardan mientras tengas la cuenta. Un análisis que eliminas pasa a la **papelera** (Perfil → Papelera): durante 30 días puedes recuperarlo o eliminarlo definitivamente, y al día 30 se borra solo, con sus fotos. Al eliminar la cuenta se borra todo de inmediato del servidor, papelera incluida; las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.
 
 ## Permisos del teléfono
 

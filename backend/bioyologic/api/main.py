@@ -94,7 +94,9 @@ def _default_model(stem: str) -> Path:
 # --------------------------------------------------------------------- dependencias
 @lru_cache(maxsize=1)
 def get_store() -> Store:
-    return Store(os.environ.get("BIOYOLOGIC_DATA", DEFAULT_DATA))
+    store = Store(os.environ.get("BIOYOLOGIC_DATA", DEFAULT_DATA))
+    store.purge_expired()  # lo que lleva más de 30 días en la papelera
+    return store
 
 
 def _model_path() -> Path:
@@ -493,7 +495,7 @@ def export_data(token: str, store: Store = Depends(get_store)) -> JSONResponse:
     if uid is None or exp < time.monotonic():
         raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
     data = store.export_user(uid)
-    for a in data["analyses"]:
+    for a in data["analyses"] + data["trash"]:
         _with_urls(a)
     for p in data["projects"]:
         _project_out(p)
@@ -650,6 +652,7 @@ def review_analysis(analysis_id: int, body: ReviewIn, store: Store = Depends(get
 @app.delete("/analyses/{analysis_id}", status_code=204)
 def delete_analysis(analysis_id: int, store: Store = Depends(get_store),
                     user: dict = Depends(verified_user)) -> Response:
+    """Manda el análisis a la papelera: se puede recuperar durante 30 días."""
     _author_only(_require(store.get_analysis(analysis_id, user["id"], False), "Análisis"), user)
     store.delete_analysis(analysis_id, user["id"])
     return Response(status_code=204)
@@ -661,9 +664,32 @@ class DeleteMany(BaseModel):
 
 @app.post("/analyses/delete")
 def delete_analyses(body: DeleteMany, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
-    """Borra varios análisis a la vez (con sus fotos). Solo los del usuario: los ajenos se ignoran."""
+    """Manda varios análisis a la papelera. Solo los del usuario: los ajenos se ignoran."""
     borrados = sum(store.delete_analysis(aid, user["id"]) for aid in set(body.ids))
     return {"deleted": borrados}
+
+
+# --------------------------------------------------------------------- papelera
+class TrashIds(BaseModel):
+    ids: list[int] | None = Field(None, max_length=1000, description="Sin ids: toda la papelera")
+
+
+@app.get("/trash")
+def list_trash(store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> list[dict]:
+    """Análisis borrados por el usuario; `purge_at` es cuándo se borran definitivamente."""
+    return [_with_urls(a, user, {}) for a in store.list_trash(user["id"])]
+
+
+@app.post("/trash/restore")
+def restore_trash(body: TrashIds, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
+    ids = body.ids if body.ids is not None else [a["id"] for a in store.list_trash(user["id"])]
+    return {"restored": store.restore_analyses(user["id"], ids)}
+
+
+@app.post("/trash/purge")
+def purge_trash(body: TrashIds, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
+    """Borra definitivamente, con sus fotos, análisis de la papelera (sin ids: la vacía). No se puede deshacer."""
+    return {"deleted": store.purge_analyses(user["id"], body.ids)}
 
 
 @app.get("/analyses/{analysis_id}/image/{kind}")

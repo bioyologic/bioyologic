@@ -43,7 +43,7 @@ void main() {
     await tester.drag(find.text('Caja A'), const Offset(-600, 0));
     await tester.pumpAndSettle();
     expect(find.text('¿Eliminar este análisis?'), findsOneWidget);
-    expect(find.textContaining('"Caja A" se borrará con sus fotos y resultados'), findsOneWidget);
+    expect(find.textContaining('"Caja A" irá a la papelera'), findsOneWidget);
 
     await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();

@@ -10,6 +10,9 @@ proyecto compartido solo lo ve su autor. Los datos anteriores a las cuentas qued
 NULL): nadie los ve hasta que se asignan o se borran con `python -m bioyologic.manage`.
 
 Las siembras en incubación (`incubations`) recuerdan cuándo leer las placas.
+
+Borrar un análisis lo manda a la papelera (`deleted_at`): deja de verse en todas partes, pero su autor puede
+recuperarlo durante TRASH_DAYS días. Después, o al vaciar la papelera, se borra definitivamente con sus fotos.
 """
 
 from __future__ import annotations
@@ -82,7 +85,8 @@ CREATE TABLE IF NOT EXISTS analyses (
     reviewer_name TEXT NOT NULL DEFAULT '',
     reviewed_at TEXT,
     review_note TEXT NOT NULL DEFAULT '',
-    incubation_id INTEGER REFERENCES incubations(id) ON DELETE SET NULL
+    incubation_id INTEGER REFERENCES incubations(id) ON DELETE SET NULL,
+    deleted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS project_members (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -121,7 +125,9 @@ MIGRATIONS = {
                  "reviewer_name": "TEXT NOT NULL DEFAULT ''",
                  "reviewed_at": "TEXT",
                  "review_note": "TEXT NOT NULL DEFAULT ''",
-                 "incubation_id": "INTEGER REFERENCES incubations(id) ON DELETE SET NULL"},
+                 "incubation_id": "INTEGER REFERENCES incubations(id) ON DELETE SET NULL",
+                 # Papelera: fecha en que se borró (NULL = activo).
+                 "deleted_at": "TEXT"},
 }
 
 INDEXES = """
@@ -139,6 +145,7 @@ IMAGE_KINDS = ("original", "annotated", "thumb")
 SESSION_DAYS = 30
 USER_FIELDS = "id, email, name, role, institution, created_at, consent_at, consent_version, email_verified"
 CODE_ATTEMPTS = 5  # intentos por código antes de invalidarlo
+TRASH_DAYS = 30  # días que un análisis borrado se puede recuperar
 MEMBER_ROLES = ("analista", "revisor")
 REVIEW_STATES = ("aprobado", "devuelto")
 
@@ -312,7 +319,8 @@ class Store:
                        JOIN projects p ON p.id = m.project_id WHERE m.user_id = ?""", (user_id,)),
                 "incubations": self._all("SELECT * FROM incubations WHERE user_id = ?", (user_id,)),
                 "analyses": [self.get_analysis(a["id"], user_id)
-                             for a in self.list_analyses(user_id, limit=1_000_000, mine_only=True)]}
+                             for a in self.list_analyses(user_id, limit=1_000_000, mine_only=True)],
+                "trash": self.list_trash(user_id)}
 
     # ---------------------------------------------------------------- sesiones
     def create_session(self, user_id: int) -> str:
@@ -349,11 +357,11 @@ class Store:
                COALESCE(SUM(CASE WHEN a.review_status = '' THEN 1 ELSE 0 END), 0) AS unreviewed_count,
                (SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id) AS members_count,
                (SELECT name FROM users u WHERE u.id = p.user_id) AS owner_name,
-               (SELECT id FROM analyses WHERE project_id = p.id
+               (SELECT id FROM analyses WHERE project_id = p.id AND deleted_at IS NULL
                 ORDER BY created_at DESC, id DESC LIMIT 1) AS cover_analysis_id,
-               (SELECT access_key FROM analyses WHERE project_id = p.id
+               (SELECT access_key FROM analyses WHERE project_id = p.id AND deleted_at IS NULL
                 ORDER BY created_at DESC, id DESC LIMIT 1) AS cover_access_key
-        FROM projects p LEFT JOIN analyses a ON a.project_id = p.id
+        FROM projects p LEFT JOIN analyses a ON a.project_id = p.id AND a.deleted_at IS NULL
     """
 
     def _with_role(self, rows: list[dict], user_id: int) -> list[dict]:
@@ -444,7 +452,7 @@ class Store:
         if incubation_id is not None:
             # Siembra con número de placas: se da por leída cuando se analizaron todas.
             self._exec("""UPDATE incubations SET done_at = ? WHERE id = ? AND done_at IS NULL AND plates IS NOT NULL
-                          AND plates <= (SELECT COUNT(*) FROM analyses WHERE incubation_id = ?)""",
+                          AND plates <= (SELECT COUNT(*) FROM analyses WHERE incubation_id = ? AND deleted_at IS NULL)""",
                        (_now(), incubation_id, incubation_id))
         return self.get_analysis(aid, user_id)
 
@@ -465,8 +473,8 @@ class Store:
         LEFT JOIN projects p ON p.id = a.project_id
         LEFT JOIN users u ON u.id = a.user_id
     """
-    # Visible para el usuario: suyo o de un proyecto al que entra (3 parámetros: user_id × 3).
-    _VISIBLE = f"(a.user_id = ? OR a.project_id IN {_MY_PROJECTS})"
+    # Visible para el usuario: suyo o de un proyecto al que entra, y fuera de la papelera (3 parámetros: user_id × 3).
+    _VISIBLE = f"(a.deleted_at IS NULL AND (a.user_id = ? OR a.project_id IN {_MY_PROJECTS}))"
 
     @staticmethod
     def _decode(row: dict, with_colonies: bool) -> dict:
@@ -535,7 +543,7 @@ class Store:
         expected = self.access_key(analysis_id)
         if not (expected and key and hmac.compare_digest(expected.encode(), key.encode())):
             return None
-        rows = self._all(self._ANALYSIS_SELECT + " WHERE a.id = ?", (analysis_id,))
+        rows = self._all(self._ANALYSIS_SELECT + " WHERE a.id = ? AND a.deleted_at IS NULL", (analysis_id,))
         return self._decode(rows[0], True) if rows else None
 
     def list_analyses(self, user_id: int, project_id: int | None = None, query: str = "",
@@ -546,7 +554,7 @@ class Store:
         `to_review`: los de otros miembros, sin revisar, en proyectos compartidos donde el usuario es dueño o
         revisor."""
         if mine_only:
-            where, params = ["a.user_id = ?"], [user_id]
+            where, params = ["a.user_id = ? AND a.deleted_at IS NULL"], [user_id]
         else:
             where, params = [self._VISIBLE], [user_id, user_id, user_id]
         if to_review:
@@ -583,10 +591,50 @@ class Store:
             self.image_path(analysis_id, kind).unlink(missing_ok=True)
 
     def delete_analysis(self, analysis_id: int, user_id: int) -> bool:
-        ok = self._exec("DELETE FROM analyses WHERE id = ? AND user_id = ?", (analysis_id, user_id)).rowcount > 0
-        if ok:
-            self._remove_images(analysis_id)
-        return ok
+        """Manda el análisis a la papelera (solo su autor). Las fotos se conservan hasta que se vacía."""
+        return self._exec("UPDATE analyses SET deleted_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+                          (_now(), analysis_id, user_id)).rowcount > 0
+
+    # ---------------------------------------------------------------- papelera
+    def list_trash(self, user_id: int) -> list[dict]:
+        """Análisis borrados por el usuario, el más reciente primero."""
+        self.purge_expired()
+        rows = self._all(self._ANALYSIS_SELECT + " WHERE a.user_id = ? AND a.deleted_at IS NOT NULL"
+                         " ORDER BY a.deleted_at DESC, a.id DESC", (user_id,))
+        out = []
+        for r in rows:
+            r = self._decode(r, False)
+            r["purge_at"] = (datetime.fromisoformat(r["deleted_at"]) + timedelta(days=TRASH_DAYS)).isoformat(
+                timespec="seconds")
+            out.append(r)
+        return out
+
+    def restore_analyses(self, user_id: int, ids: list[int]) -> int:
+        """Saca análisis de la papelera. Vuelven a su proyecto si sigue existiendo."""
+        n = 0
+        for aid in set(ids):
+            n += self._exec("UPDATE analyses SET deleted_at = NULL WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL",
+                            (aid, user_id)).rowcount
+        return n
+
+    def purge_analyses(self, user_id: int, ids: list[int] | None = None) -> int:
+        """Borra definitivamente (con fotos) análisis de la papelera; sin `ids`, la vacía entera."""
+        rows = self._all("SELECT id FROM analyses WHERE user_id = ? AND deleted_at IS NOT NULL", (user_id,))
+        objetivo = [r["id"] for r in rows if ids is None or r["id"] in set(ids)]
+        for aid in objetivo:
+            self._exec("DELETE FROM analyses WHERE id = ?", (aid,))
+            self._remove_images(aid)
+        return len(objetivo)
+
+    def purge_expired(self, days: int = TRASH_DAYS) -> int:
+        """Borra definitivamente lo que lleva más de `days` días en la papelera."""
+        limite = datetime.now().astimezone() - timedelta(days=days)
+        viejos = [r["id"] for r in self._all("SELECT id, deleted_at FROM analyses WHERE deleted_at IS NOT NULL")
+                  if datetime.fromisoformat(r["deleted_at"]) < limite]
+        for aid in viejos:
+            self._exec("DELETE FROM analyses WHERE id = ?", (aid,))
+            self._remove_images(aid)
+        return len(viejos)
 
     def sample_plates(self, user_id: int, project_id: int | None = None, group: str | None = None) -> list[dict]:
         """Placas que pertenecen a alguna muestra (sample_group no vacío), para agruparlas y combinarlas.
@@ -617,7 +665,7 @@ class Store:
     # ---------------------------------------------------------------- siembras en incubación
     _INCUBATION_SELECT = """
         SELECT i.*, p.name AS project_name, u.name AS created_by,
-               (SELECT COUNT(*) FROM analyses x WHERE x.incubation_id = i.id) AS analyses_count
+               (SELECT COUNT(*) FROM analyses x WHERE x.incubation_id = i.id AND x.deleted_at IS NULL) AS analyses_count
         FROM incubations i
         LEFT JOIN projects p ON p.id = i.project_id
         LEFT JOIN users u ON u.id = i.user_id
@@ -665,7 +713,7 @@ class Store:
     def stats(self, user_id: int) -> dict:
         return self._all(f"""SELECT COUNT(*) AS analyses, COALESCE(SUM(total), 0) AS colonies,
                                     (SELECT COUNT(*) FROM projects WHERE id IN {_MY_PROJECTS}) AS projects
-                             FROM analyses WHERE user_id = ?""", (user_id, user_id, user_id))[0]
+                             FROM analyses WHERE user_id = ? AND deleted_at IS NULL""", (user_id, user_id, user_id))[0]
 
     # ---------------------------------------------------------------- datos sin dueño
     def orphans(self) -> dict:

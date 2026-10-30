@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import 'incubations_screen.dart';
 import 'info_screens.dart';
+import 'trash_screen.dart';
 import 'tutorial_screen.dart';
 import 'projects_screen.dart';
 import 'settings_screen.dart';
@@ -72,6 +73,7 @@ class ProfileScreen extends StatelessWidget {
             Card(
               child: Column(children: [
                 _Item(Icons.table_view_outlined, 'Exportar mis análisis a Excel', () => exportCsv(context)),
+                _Item(Icons.delete_outline, 'Papelera', () => push(const TrashScreen())),
                 _Item(Icons.download_outlined, 'Descargar mis datos', () => _exportData(context)),
                 _Item(Icons.logout, 'Cerrar sesión', () => confirmLogout(context), danger: true),
                 _Item(Icons.delete_forever_outlined, 'Eliminar mi cuenta', () => confirmDeleteAccount(context),
@@ -106,8 +108,8 @@ Future<void> confirmDeleteAccount(BuildContext context) async {
     builder: (ctx) => AlertDialog(
       title: const Text('¿Eliminar tu cuenta?'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Text('Se borrarán del servidor tu cuenta y todos tus análisis, proyectos y fotos. '
-            'No se puede deshacer.'),
+        const Text('Se borrarán del servidor tu cuenta y todos tus análisis (también los de la papelera), '
+            'proyectos y fotos. No se puede deshacer.'),
         const SizedBox(height: 16),
         TextField(
           controller: password,

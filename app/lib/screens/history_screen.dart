@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/analysis_tile.dart';
 import '../widgets/common.dart';
 import 'capture_screen.dart';
+import 'trash_screen.dart';
 
 /// Pestaña "Análisis": historial completo con búsqueda.
 ///
@@ -50,7 +51,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final n = await state.api.deleteAnalyses(ids);
       state.dataChanged();
       if (!mounted) return;
-      showSnack(context, n == 1 ? 'Se eliminó 1 análisis' : 'Se eliminaron $n análisis');
+      if (n > 0) showDeletedSnack(context, ids);
       setState(() => _selected = null);
       await _reload?.call();
     } catch (e) {
@@ -72,6 +73,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
       child: Scaffold(
         appBar: sel == null
             ? AppBar(title: const Text('Análisis'), actions: [
+                IconButton(
+                  tooltip: 'Papelera',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () =>
+                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TrashScreen())),
+                ),
                 TextButton.icon(
                   onPressed: () => setState(() => _selected = {}),
                   icon: const Icon(Icons.checklist),

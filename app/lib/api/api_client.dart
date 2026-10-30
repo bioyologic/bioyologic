@@ -200,7 +200,7 @@ class ApiClient {
 
   Future<void> deleteAnalysis(int id) => _send('DELETE', '/analyses/$id');
 
-  /// Borra varios análisis a la vez (con sus fotos); devuelve cuántos se borraron.
+  /// Manda varios análisis a la papelera; devuelve cuántos se borraron.
   Future<int> deleteAnalyses(List<int> ids) async =>
       (await _send('POST', '/analyses/delete', {'ids': ids}) as Map<String, dynamic>)['deleted'] as int;
 
@@ -217,6 +217,19 @@ class ApiClient {
   Future<Analysis> review(int id, String status, {String note = ''}) async =>
       Analysis.fromJson(await _send('POST', '/analyses/$id/review', {'status': status, 'note': note})
           as Map<String, dynamic>);
+
+  // ----------------------------------------------------------------- papelera
+  /// Análisis borrados: se pueden recuperar durante 30 días.
+  Future<List<Analysis>> trash() async =>
+      (await _get('/trash') as List).map((a) => Analysis.fromJson(a as Map<String, dynamic>)).toList();
+
+  /// Recupera análisis de la papelera (null = todos).
+  Future<int> restoreAnalyses([List<int>? ids]) async =>
+      (await _send('POST', '/trash/restore', {'ids': ids}) as Map<String, dynamic>)['restored'] as int;
+
+  /// Elimina definitivamente, con sus fotos (null = vaciar la papelera). No se puede deshacer.
+  Future<int> purgeAnalyses([List<int>? ids]) async =>
+      (await _send('POST', '/trash/purge', {'ids': ids}) as Map<String, dynamic>)['deleted'] as int;
 
   // ----------------------------------------------------------------- equipo
   List<Member> _members(Object? body) =>

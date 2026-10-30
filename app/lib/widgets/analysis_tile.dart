@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../screens/result_screen.dart';
+import '../screens/trash_screen.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import 'common.dart';
 import 'format.dart';
 
-/// Pregunta antes de borrar análisis (no se puede deshacer).
+/// Pregunta antes de mandar análisis a la papelera.
 Future<bool> confirmDeleteAnalyses(BuildContext context, int count, {String? name}) async {
   final ok = await showDialog<bool>(
     context: context,
@@ -15,7 +16,8 @@ Future<bool> confirmDeleteAnalyses(BuildContext context, int count, {String? nam
       title: Text(count == 1 ? '¿Eliminar este análisis?' : '¿Eliminar $count análisis?'),
       content: Text(
           '${count == 1 && name != null ? '"$name"' : count == 1 ? 'El análisis' : 'Los análisis'} '
-          '${count == 1 ? 'se borrará' : 'se borrarán'} con sus fotos y resultados. No se puede deshacer.'),
+          '${count == 1 ? 'irá' : 'irán'} a la papelera. Podrás recuperarlo${count == 1 ? '' : 's'} durante 30 días '
+          'desde la Papelera (en Perfil).'),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
         FilledButton(
@@ -29,14 +31,36 @@ Future<bool> confirmDeleteAnalyses(BuildContext context, int count, {String? nam
   return ok ?? false;
 }
 
-/// Borra un análisis tras confirmar; true si se borró.
+/// Aviso tras borrar, con "Deshacer" (recupera de la papelera).
+void showDeletedSnack(BuildContext context, List<int> ids) {
+  final state = AppScope.read(context);
+  final nav = Navigator.of(context);
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    behavior: SnackBarBehavior.floating,
+    duration: const Duration(seconds: 6),
+    content: Text(ids.length == 1 ? 'Movido a la papelera' : '${ids.length} análisis movidos a la papelera'),
+    action: SnackBarAction(
+      label: 'Deshacer',
+      onPressed: () async {
+        try {
+          await state.api.restoreAnalyses(ids);
+          state.dataChanged();
+        } catch (_) {
+          nav.push(MaterialPageRoute(builder: (_) => const TrashScreen()));
+        }
+      },
+    ),
+  ));
+}
+
+/// Manda un análisis a la papelera tras confirmar; true si se borró.
 Future<bool> deleteAnalysisWithConfirm(BuildContext context, Analysis a) async {
   if (!await confirmDeleteAnalyses(context, 1, name: a.sampleName) || !context.mounted) return false;
   final state = AppScope.read(context);
   try {
     await state.api.deleteAnalysis(a.id);
     state.dataChanged();
-    if (context.mounted) showSnack(context, 'Análisis eliminado');
+    if (context.mounted) showDeletedSnack(context, [a.id]);
     return true;
   } catch (e) {
     if (context.mounted) showSnack(context, '$e');

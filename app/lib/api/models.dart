@@ -34,7 +34,13 @@ class Analysis {
         canCorrect = (j['can_correct'] as bool?) ?? true,
         canReview = (j['can_review'] as bool?) ?? false,
         review = j['review'] == null ? null : Review.fromJson(j['review'] as Map<String, dynamic>),
-        incubation = j['incubation'] == null ? null : IncubationRecord.fromJson(j['incubation'] as Map<String, dynamic>);
+        incubation = j['incubation'] == null ? null : IncubationRecord.fromJson(j['incubation'] as Map<String, dynamic>),
+        deletedAt = j['deleted_at'] == null ? null : DateTime.parse(j['deleted_at'] as String).toLocal(),
+        purgeAt = j['purge_at'] == null ? null : DateTime.parse(j['purge_at'] as String).toLocal();
+
+  /// En la papelera: cuándo se borró y cuándo se elimina definitivamente.
+  final DateTime? deletedAt;
+  final DateTime? purgeAt;
 
   /// Quién hizo el análisis (en proyectos compartidos puede ser otro miembro).
   final String authorName;

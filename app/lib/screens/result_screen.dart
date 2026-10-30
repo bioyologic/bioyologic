@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/analysis_tile.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'correction_screen.dart';
@@ -89,7 +90,7 @@ class _ResultView extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('¿Eliminar análisis?'),
-            content: Text('Se borrarán "${a.sampleName}", sus imágenes y sus resultados.'),
+            content: Text('"${a.sampleName}" irá a la papelera. Podrás recuperarlo durante 30 días.'),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
               FilledButton(
@@ -102,7 +103,9 @@ class _ResultView extends StatelessWidget {
         if (ok == true) {
           await state.api.deleteAnalysis(a.id);
           state.dataChanged();
-          if (context.mounted) Navigator.pop(context);
+          if (!context.mounted) return;
+          showDeletedSnack(context, [a.id]); // el aviso sigue visible en la pantalla anterior
+          Navigator.pop(context);
         }
     }
   }

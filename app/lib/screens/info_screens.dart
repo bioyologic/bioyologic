@@ -137,7 +137,7 @@ class HelpScreen extends StatelessWidget {
                 'orientativo.'),
         ('No conecta con el servidor',
             'Comprueba tu conexión a internet. La app usa el servidor de Bioyologic en la nube '
-                '(https://bioyologic.duckdns.org); puedes verlo o cambiarlo en Configuración → Servidor.'),
+                '(https://bioyologic.duckdns.org); puedes verlo o cambiarlo en Configuración, en Servidor.'),
       ]);
 }
 
@@ -261,8 +261,10 @@ class PrivacyScreen extends StatelessWidget {
                 'y todos sus análisis, proyectos, siembras y fotos. Puedes salir de un proyecto compartido cuando '
                 'quieras.'),
         ('Conservación',
-            'Tus datos se guardan mientras tengas la cuenta. Al eliminarla se borran de inmediato del servidor; '
-                'las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.'),
+            'Tus datos se guardan mientras tengas la cuenta. Un análisis que eliminas pasa a la papelera '
+                '(en Perfil, Papelera): durante 30 días puedes recuperarlo o eliminarlo definitivamente, y al día 30 '
+                'se borra solo, con sus fotos. Al eliminar la cuenta se borra todo de inmediato del servidor, '
+                'papelera incluida; las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.'),
         ('Permisos del teléfono',
             'Cámara: para fotografiar la placa. Fotos: para elegir una imagen de la galería. Solo se envía la '
                 'foto cuando pulsas "Analizar".'),
