@@ -583,6 +583,17 @@ def delete_analysis(analysis_id: int, store: Store = Depends(get_store),
     return Response(status_code=204)
 
 
+class DeleteMany(BaseModel):
+    ids: list[int] = Field(..., min_length=1, max_length=1000)
+
+
+@app.post("/analyses/delete")
+def delete_analyses(body: DeleteMany, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
+    """Borra varios análisis a la vez (con sus fotos). Solo los del usuario: los ajenos se ignoran."""
+    borrados = sum(store.delete_analysis(aid, user["id"]) for aid in set(body.ids))
+    return {"deleted": borrados}
+
+
 @app.get("/analyses/{analysis_id}/image/{kind}")
 def analysis_image(analysis_id: int, kind: str, key: str = "", store: Store = Depends(get_store)) -> FileResponse:
     if kind not in IMAGE_KINDS:

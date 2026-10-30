@@ -196,6 +196,10 @@ class ApiClient {
 
   Future<void> deleteAnalysis(int id) => _send('DELETE', '/analyses/$id');
 
+  /// Borra varios análisis a la vez (con sus fotos); devuelve cuántos se borraron.
+  Future<int> deleteAnalyses(List<int> ids) async =>
+      (await _send('POST', '/analyses/delete', {'ids': ids}) as Map<String, dynamic>)['deleted'] as int;
+
   /// Corrección manual del conteo: ids detectados que se quitan y colonias agregadas (píxeles de la foto).
   /// Listas vacías deshacen la corrección.
   Future<Analysis> correctColonies(int id, {required List<int> removed,

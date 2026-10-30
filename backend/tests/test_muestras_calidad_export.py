@@ -100,3 +100,21 @@ def test_samples_group_plates_and_export_csv(ctx):
     assert all(f[0] == "Río Bogotá" for f in filas[1:]) and filas[1][6] == str(n)
     assert TestClient(app).get(url).status_code == 404  # un solo uso
     assert client.post("/export-link", json={"project_id": 999}).status_code == 404
+
+
+def test_delete_many_only_own_analyses(ctx, tmp_path):
+    client, jpg, _ = ctx
+    ids = [_upload(client, jpg).json()["id"] for _ in range(3)]
+    from fastapi.testclient import TestClient
+    from bioyologic.api.main import app
+    from .test_api import _register
+    otro = TestClient(app)
+    otro.headers["Authorization"] = f"Bearer {_register(client, 'beto@lab.co')['token']}"
+    ajeno = _upload(otro, jpg).json()["id"]
+
+    r = client.post("/analyses/delete", json={"ids": [ids[0], ids[1], ajeno, 9999]})
+    assert r.json() == {"deleted": 2}  # el ajeno y el inexistente se ignoran
+    assert [a["id"] for a in client.get("/analyses").json()] == [ids[2]]
+    assert not list((tmp_path / "images").glob(f"{ids[0]}_*"))  # sus fotos también se borran
+    assert otro.get(f"/analyses/{ajeno}").status_code == 200
+    assert client.post("/analyses/delete", json={"ids": []}).status_code == 422

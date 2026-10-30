@@ -197,7 +197,7 @@ class ProjectDetailScreen extends StatelessWidget {
                   const EmptyState(icon: Icons.science_outlined, title: 'Sin muestras',
                       message: 'Añade la primera placa a este proyecto.')
                 else
-                  for (final a in items) Padding(padding: const EdgeInsets.only(bottom: 10), child: AnalysisTile(a)),
+                  DeletableAnalysisList(items, onChanged: reload),
               ],
             ),
           ),
