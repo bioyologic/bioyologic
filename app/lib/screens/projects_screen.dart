@@ -344,10 +344,19 @@ Future<void> showProjectEditor(BuildContext context, {Project? project}) async {
 
 
 /// Descarga en CSV (Excel) los análisis de un proyecto, o todos si no se indica proyecto.
-Future<void> exportCsv(BuildContext context, {int? projectId}) async {
+Future<void> exportCsv(BuildContext context, {int? projectId}) =>
+    openDownload(context, () => AppScope.read(context).api.csvExportLink(projectId: projectId),
+        'Descargando el archivo para Excel…');
+
+/// Pide al servidor un enlace de descarga y lo abre en el navegador, que guarda el archivo en Descargas.
+/// Avisa si el navegador no se pudo abrir.
+Future<void> openDownload(BuildContext context, Future<String> Function() link, String message) async {
   try {
-    final link = await AppScope.read(context).api.csvExportLink(projectId: projectId);
-    await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
+    final url = await link();
+    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!context.mounted) return;
+    showSnack(context, ok ? '$message Lo encontrarás en la carpeta Descargas.'
+        : 'No se pudo abrir el navegador para descargar el archivo.');
   } catch (e) {
     if (context.mounted) showSnack(context, '$e');
   }

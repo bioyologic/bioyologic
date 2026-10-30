@@ -92,13 +92,13 @@ def test_samples_group_plates_and_export_csv(ctx):
     assert "R%C3%ADo%20Bogot%C3%A1.csv" in url
     from fastapi.testclient import TestClient
     from bioyologic.api.main import app
-    r = TestClient(app).get(url)  # sin token: el enlace de un solo uso basta
+    r = TestClient(app).get(url)  # sin token: el enlace secreto basta
     assert r.status_code == 200 and r.content[:3] == b"\xef\xbb\xbf"
     filas = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig")), delimiter=";"))
     assert filas[0][:4] == ["Proyecto", "Muestra", "Placa", "Fecha"] and len(filas) == 1 + 4
     assert {f[1] for f in filas[1:]} == {"Punto 1", ""}
     assert all(f[0] == "Río Bogotá" for f in filas[1:]) and filas[1][6] == str(n)
-    assert TestClient(app).get(url).status_code == 404  # un solo uso
+    assert TestClient(app).get(url).status_code == 200  # vale varias veces mientras no caduque
     assert client.post("/export-link", json={"project_id": 999}).status_code == 404
 
 

@@ -5,6 +5,44 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
+/// Id de la ficha de una especie ("Escherichia coli" -> "escherichia-coli"), como en el servidor.
+String speciesEntryId(String species) =>
+    species.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-').replaceAll(RegExp(r'^-+|-+$'), '');
+
+const _icons = {
+  'diluciones': Icons.science_outlined,
+  'siembra': Icons.water_drop_outlined,
+  'incubacion': Icons.timer_outlined,
+  'calculo': Icons.calculate_outlined,
+  'control': Icons.verified_outlined,
+  'flujo': Icons.route_outlined,
+  'foto': Icons.photo_camera_outlined,
+  'avisos': Icons.report_problem_outlined,
+  'corregir': Icons.edit_outlined,
+  'morfologia': Icons.blur_circular,
+  'especie': Icons.biotech_outlined,
+  'equipo': Icons.groups_outlined,
+  'bioseguridad': Icons.health_and_safety_outlined,
+};
+
+/// Imagen de un microorganismo, o ícono de un protocolo o guía.
+class _EntryVisual extends StatelessWidget {
+  const _EntryVisual(this.e, {required this.size});
+  final LibraryEntry e;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    if (e.isMicro) return ApiImage(e.imageUrl, width: size, height: size);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: Bio.greenSoft, borderRadius: BorderRadius.circular(12)),
+      child: Icon(_icons[e.icon] ?? Icons.menu_book_outlined, color: Bio.green, size: size * 0.45),
+    );
+  }
+}
+
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
 
@@ -42,7 +80,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(children: [
-                  for (final (key, label) in [('todos', 'Todos'), ...lib.categories.entries.map((e) => (e.key, e.value))])
+                  for (final (key, label) in [
+                    ('todos', 'Todos'),
+                    ...lib.categories.entries.map(
+                        (c) => (c.key, '${c.value} (${lib.entries.where((e) => e.category == c.key).length})')),
+                  ])
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
@@ -85,7 +127,7 @@ class _EntryCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Row(children: [
-            ApiImage(e.imageUrl, width: 72, height: 72),
+            _EntryVisual(e, size: 72),
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -93,7 +135,7 @@ class _EntryCard extends StatelessWidget {
                     style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 15,
-                        fontStyle: e.category == 'bacterias' ? FontStyle.italic : FontStyle.normal)),
+                        fontStyle: e.isMicro ? FontStyle.italic : FontStyle.normal)),
                 const SizedBox(height: 2),
                 Text(e.subtitle, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12.5)),
                 const SizedBox(height: 6),
@@ -128,11 +170,20 @@ class LibraryDetailScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
             children: [
-              AspectRatio(aspectRatio: 1.8, child: ApiImage(e.imageUrl, radius: 18)),
+              if (e.isMicro) ...[
+                AspectRatio(aspectRatio: 1.8, child: ApiImage(e.imageUrl, radius: 18)),
+                if (e.imageCaption != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(e.imageCaption!,
+                        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12, fontStyle: FontStyle.italic)),
+                  ),
+              ] else
+                Align(alignment: Alignment.centerLeft, child: _EntryVisual(e, size: 64)),
               const SizedBox(height: 16),
               Text(e.title,
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700,
-                      fontStyle: e.category == 'bacterias' ? FontStyle.italic : FontStyle.normal)),
+                      fontStyle: e.isMicro ? FontStyle.italic : FontStyle.normal)),
               const SizedBox(height: 4),
               Text(e.subtitle, style: TextStyle(color: cs.onSurfaceVariant)),
               const SizedBox(height: 12),

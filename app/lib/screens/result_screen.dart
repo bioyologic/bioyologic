@@ -12,6 +12,7 @@ import '../widgets/analysis_tile.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'correction_screen.dart';
+import 'library_screen.dart';
 import 'samples_screen.dart';
 import 'team_screen.dart';
 
@@ -463,6 +464,16 @@ class _SpeciesCard extends StatelessWidget {
         const SizedBox(height: 8),
         const Text('Orientativo: confirma la especie con pruebas microbiológicas.',
             style: TextStyle(color: ink, fontSize: 11.5, fontStyle: FontStyle.italic)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            style: TextButton.styleFrom(foregroundColor: ink, padding: EdgeInsets.zero),
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => LibraryDetailScreen(speciesEntryId(best.name)))),
+            icon: const Icon(Icons.menu_book_outlined, size: 18),
+            label: Text('Ver ficha de ${best.name}', style: const TextStyle(fontStyle: FontStyle.italic)),
+          ),
+        ),
       ]),
     );
   }

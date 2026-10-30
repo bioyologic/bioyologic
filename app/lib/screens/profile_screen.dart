@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../api/models.dart';
 import '../state/app_state.dart';
@@ -89,12 +88,7 @@ class ProfileScreen extends StatelessWidget {
 
 /// Derecho de acceso (Ley 1581): descarga en JSON todo lo que el servidor guarda de la cuenta.
 Future<void> _exportData(BuildContext context) async {
-  try {
-    final link = await AppScope.read(context).api.exportLink();
-    await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
-  } catch (e) {
-    if (context.mounted) showSnack(context, '$e');
-  }
+  await openDownload(context, () => AppScope.read(context).api.exportLink(), 'Descargando tus datos…');
 }
 
 void _toLogin(BuildContext context) => Navigator.of(context, rootNavigator: true)

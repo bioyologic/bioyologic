@@ -112,7 +112,12 @@ def test_export_my_data(ctx):
     data = r.json()
     assert data["user"]["email"] == "ana@lab.co"
     assert len(data["analyses"]) == 1 and len(data["analyses"][0]["colonies"]) == len(labels)
-    assert _client().get(url).status_code == 404  # un solo uso
+    # Se puede pedir de nuevo mientras no caduque (Chrome en Android descarga en dos peticiones)
+    assert _client().get(url).status_code == 200
+    from bioyologic.api import main
+    token = url.split("token=")[1]
+    main._export_links[token] = (main._export_links[token][0], 0.0)  # caducado
+    assert _client().get(url).status_code == 404
 
 
 def test_delete_account_erases_everything(ctx, tmp_path):

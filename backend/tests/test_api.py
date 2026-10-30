@@ -105,13 +105,29 @@ def test_rejects_bad_input(ctx):
 def test_library(ctx):
     client, _, _ = ctx
     lib = client.get("/library").json()
-    assert set(lib["categories"]) == {"bacterias", "protocolos", "guias"}
+    assert set(lib["categories"]) == {"microorganismos", "protocolos", "guias"}
     first = lib["entries"][0]
     assert "sections" not in first
     detail = client.get(f"/library/{first['id']}").json()
     assert detail["sections"]
     img = client.get(first["image_url"])
     assert img.status_code == 200 and img.content[:2] == b"\xff\xd8"
+
+
+def test_library_has_every_species_of_the_classifier():
+    """Una ficha por cada especie que puede predecir el modelo, con el medio de sus fotos de entrenamiento."""
+    import json
+    from pathlib import Path
+    from bioyologic.library import ENTRIES, MEDIOS
+
+    info = json.loads((Path(__file__).parents[2] / "models" / "bioyologic_species.json").read_text(encoding="utf-8"))
+    micros = {e["species"]: e for e in ENTRIES if e["category"] == "microorganismos"}
+    assert set(micros) == set(info["classes"])
+    for name, e in micros.items():
+        medio = MEDIOS[info["species_info"][name]["agar"]] if name in info["species_info"] else None
+        en_bioyologic = dict(e["sections"])["En Bioyologic"]
+        assert medio is None or medio in en_bioyologic, name
+        assert e["id"] == name.lower().replace(" ", "-")
 
 
 def test_resolve_scale():

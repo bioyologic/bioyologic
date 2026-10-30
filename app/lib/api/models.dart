@@ -231,6 +231,9 @@ class LibraryEntry {
         subtitle = j['subtitle'] as String,
         tags = List<String>.from(j['tags'] as List),
         imageUrl = j['image_url'] as String,
+        species = j['species'] as String?,
+        imageCaption = j['image_caption'] as String?,
+        icon = j['icon'] as String?,
         sections = (j['sections'] as List?)
             ?.map((s) => (title: (s as List)[0] as String, body: s[1] as String))
             .toList();
@@ -241,7 +244,18 @@ class LibraryEntry {
   final String subtitle;
   final List<String> tags;
   final String imageUrl;
+
+  /// Nombre de la especie tal como la predice el clasificador (solo microorganismos).
+  final String? species;
+
+  /// Aclaración de la imagen (p. ej. que es una ilustración y no una foto real).
+  final String? imageCaption;
+
+  /// Ícono de protocolos y guías.
+  final String? icon;
   final List<({String title, String body})>? sections;
+
+  bool get isMicro => category == 'microorganismos';
 }
 
 class Stats {

@@ -473,7 +473,10 @@ def delete_me(body: DeleteAccount, store: Store = Depends(get_store),
     return Response(status_code=204)
 
 
-# Enlaces de descarga de un solo uso: el navegador los abre sin poder enviar el token.
+# Enlaces de descarga secretos que valen 5 minutos: el navegador los abre sin poder enviar el token.
+# No son de un solo uso: en Android, Chrome pide el archivo dos veces (al abrir la página y desde su gestor
+# de descargas), y un enlace de un solo uso hacía fallar la segunda petición sin ningún aviso.
+LINK_SECONDS = 300
 _export_links: dict[str, tuple[int, float]] = {}
 
 
@@ -485,13 +488,13 @@ def export_link(user: dict = Depends(current_user)) -> dict:
         if exp < now:
             del _export_links[t]
     token = secrets.token_urlsafe(24)
-    _export_links[token] = (user["id"], now + 300)
+    _export_links[token] = (user["id"], now + LINK_SECONDS)
     return {"url": f"/auth/me/export?token={token}"}
 
 
 @app.get("/auth/me/export")
 def export_data(token: str, store: Store = Depends(get_store)) -> JSONResponse:
-    uid, exp = _export_links.pop(token, (None, 0.0))
+    uid, exp = _export_links.get(token, (None, 0.0))
     if uid is None or exp < time.monotonic():
         raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
     data = store.export_user(uid)
@@ -774,7 +777,7 @@ class ExportIn(BaseModel):
     project_id: int | None = None
 
 
-# Enlaces de un solo uso (5 min) para descargar el CSV desde el navegador, que no puede enviar el token.
+# Enlaces de 5 minutos para descargar el CSV desde el navegador, que no puede enviar el token.
 _csv_links: dict[str, tuple[int, int | None, float]] = {}
 
 
@@ -789,13 +792,13 @@ def csv_export_link(body: ExportIn, store: Store = Depends(get_store), user: dic
         if exp < now:
             del _csv_links[t]
     token = secrets.token_urlsafe(24)
-    _csv_links[token] = (user["id"], body.project_id, now + 300)
+    _csv_links[token] = (user["id"], body.project_id, now + LINK_SECONDS)
     return {"url": f"/export/{quote(pdf_name(nombre)[:-4] + '.csv')}?token={token}"}
 
 
 @app.get("/export/{filename}")
 def csv_export(filename: str, token: str, store: Store = Depends(get_store)) -> Response:
-    uid, project_id, exp = _csv_links.pop(token, (None, None, 0.0))
+    uid, project_id, exp = _csv_links.get(token, (None, None, 0.0))
     if uid is None or exp < time.monotonic():
         raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
     analyses = store.list_analyses(uid, project_id, limit=1_000_000)
