@@ -234,8 +234,9 @@ class PrivacyScreen extends StatelessWidget {
                 'personales de Colombia y el Decreto 1377 de 2013. Versión de la política: octubre de 2026.'),
         ('Responsable',
             'El equipo del proyecto Bioyologic (Pontificia Universidad Javeriana), que administra el servidor '
-                'donde se guarda tu cuenta. Puedes contactarnos desde el repositorio del proyecto '
-                '(github.com/bioyologic/bioyologic).'),
+                'donde se guarda tu cuenta. Para consultas, reclamos o ejercer tus derechos sobre tus datos, '
+                'escribe a martinezc.juanjo@gmail.com. Respondemos consultas en máximo 10 días hábiles y '
+                'reclamos en máximo 15 días hábiles, como fija la ley.'),
         ('Qué datos guardamos',
             'De tu cuenta: nombre, correo, profesión o rol, institución y la fecha en que aceptaste esta '
                 'política. Tu contraseña se guarda cifrada (scrypt) y nadie, ni siquiera el equipo, puede leerla. '
