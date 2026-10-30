@@ -240,23 +240,26 @@ class PrivacyScreen extends StatelessWidget {
         ('Qué datos guardamos',
             'De tu cuenta: nombre, correo, profesión o rol, institución y la fecha en que aceptaste esta '
                 'política. Tu contraseña se guarda cifrada (scrypt) y nadie, ni siquiera el equipo, puede leerla. '
-                'De tu trabajo: las fotos que analizas y los datos de cada muestra (nombre, proyecto, dilución, '
-                'volumen, notas y resultados).'),
+                'De tu trabajo: las fotos que analizas, los datos de cada muestra (nombre, proyecto, dilución, '
+                'volumen, notas y resultados), tus siembras en incubación y las revisiones que haces.'),
         ('Para qué',
             'Solo para identificarte, calcular los resultados y guardar tu historial y tus proyectos. '
                 'No vendemos ni compartimos tus datos, no hay publicidad, analítica ni rastreadores, y no pedimos '
                 'tu ubicación ni tus contactos.'),
         ('Quién ve tus datos',
-            'Solo tú. Cada cuenta ve únicamente sus propios análisis y proyectos. Las fotos y los informes PDF '
-                'se abren con un enlace secreto que solo conoce tu cuenta. La conexión con el servidor va cifrada '
-                '(HTTPS).'),
+            'Solo tú, salvo en los proyectos compartidos. Si compartes un proyecto, o alguien te invita a uno, '
+                'sus miembros ven las placas de ese proyecto, el nombre de quien hizo cada análisis y quién lo '
+                'revisó; tu correo solo lo ve quien creó el proyecto. Lo que está fuera de un proyecto compartido '
+                'solo lo ves tú. Las fotos y los informes PDF se abren con un enlace secreto propio de cada '
+                'análisis. La conexión con el servidor va cifrada (HTTPS).'),
         ('Datos de pacientes',
             'No subas fotos ni notas con nombres, documentos u otros datos de pacientes. Usa códigos de muestra.'),
         ('Tus derechos',
             'Puedes conocer, actualizar, rectificar y suprimir tus datos, y revocar esta autorización, en '
                 'cualquier momento y sin costo, desde Perfil: "Mi perfil" para actualizarlos, "Descargar mis '
                 'datos" para recibir una copia completa y "Eliminar mi cuenta" para borrar del servidor la cuenta '
-                'y todos sus análisis, proyectos y fotos.'),
+                'y todos sus análisis, proyectos, siembras y fotos. Puedes salir de un proyecto compartido cuando '
+                'quieras.'),
         ('Conservación',
             'Tus datos se guardan mientras tengas la cuenta. Al eliminarla se borran de inmediato del servidor; '
                 'las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.'),

@@ -27,7 +27,33 @@ class Analysis {
         correction = j['correction'] == null ? null : Correction.fromJson(j['correction'] as Map<String, dynamic>),
         imageUrls = Map<String, String>.from(j['image_urls'] as Map),
         reportUrl = j['report_url'] as String,
-        species = j['species'] == null ? null : SpeciesPrediction.fromJson(j['species'] as Map<String, dynamic>);
+        species = j['species'] == null ? null : SpeciesPrediction.fromJson(j['species'] as Map<String, dynamic>),
+        authorName = (j['author_name'] as String?) ?? '',
+        isMine = (j['is_mine'] as bool?) ?? true,
+        canEdit = (j['can_edit'] as bool?) ?? true,
+        canCorrect = (j['can_correct'] as bool?) ?? true,
+        canReview = (j['can_review'] as bool?) ?? false,
+        review = j['review'] == null ? null : Review.fromJson(j['review'] as Map<String, dynamic>),
+        incubation = j['incubation'] == null ? null : IncubationRecord.fromJson(j['incubation'] as Map<String, dynamic>);
+
+  /// Quién hizo el análisis (en proyectos compartidos puede ser otro miembro).
+  final String authorName;
+  final bool isMine;
+
+  /// Renombrar, mover, asignar a muestra y borrar: solo el autor.
+  final bool canEdit;
+
+  /// Corregir el conteo: el autor, y en un proyecto compartido también el dueño y los revisores.
+  final bool canCorrect;
+
+  /// Aprobar o devolver: dueño o revisor del proyecto compartido, nunca el autor.
+  final bool canReview;
+
+  /// Revisión (solo en proyectos compartidos); null si el proyecto no es compartido.
+  final Review? review;
+
+  /// Siembra de la que salió la placa, con las horas reales de incubación.
+  final IncubationRecord? incubation;
 
   final int id;
   final int? projectId;
@@ -159,7 +185,25 @@ class Project {
             ? null
             : DateTime.parse(j['last_analysis_at'] as String).toLocal(),
         coverUrl = j['cover_url'] as String?,
-        progress = _d(j['progress'])!;
+        progress = _d(j['progress'])!,
+        myRole = (j['my_role'] as String?) ?? 'owner',
+        shared = (j['shared'] as bool?) ?? false,
+        membersCount = (j['members_count'] as int?) ?? 0,
+        ownerName = (j['owner_name'] as String?) ?? '',
+        unreviewedCount = (j['unreviewed_count'] as int?) ?? 0;
+
+  /// owner | analista | revisor
+  final String myRole;
+  bool get isOwner => myRole == 'owner';
+  bool get canReview => shared && (myRole == 'owner' || myRole == 'revisor');
+
+  /// Tiene otros miembros además del dueño.
+  final bool shared;
+  final int membersCount;
+  final String ownerName;
+
+  /// Análisis del proyecto sin revisar (solo en proyectos compartidos).
+  final int unreviewedCount;
 
   final int id;
   final String name;
@@ -279,6 +323,98 @@ class PhotoQuality {
 
   final bool ok;
   final List<({String code, String message})> issues;
+}
+
+/// Revisión de un análisis en un proyecto compartido.
+class Review {
+  Review.fromJson(Map<String, dynamic> j)
+      : status = j['status'] as String,
+        by = (j['by'] as String?) ?? '',
+        at = j['at'] == null ? null : DateTime.parse(j['at'] as String).toLocal(),
+        note = (j['note'] as String?) ?? '';
+
+  /// pendiente | aprobado | devuelto
+  final String status;
+  final String by;
+  final DateTime? at;
+  final String note;
+
+  bool get pending => status == 'pendiente';
+}
+
+/// Miembro de un proyecto compartido.
+class Member {
+  Member.fromJson(Map<String, dynamic> j)
+      : userId = j['user_id'] as int,
+        name = j['name'] as String,
+        role = j['role'] as String,
+        email = j['email'] as String?;
+
+  final int userId;
+  final String name;
+
+  /// owner | analista | revisor
+  final String role;
+
+  /// Solo lo ve el dueño del proyecto (y cada uno el suyo).
+  final String? email;
+}
+
+String roleLabel(String role) =>
+    {'owner': 'Dueño', 'analista': 'Analista', 'revisor': 'Revisor'}[role] ?? role;
+
+/// Siembra en incubación: la app avisa cuando las placas están listas para leer.
+class Incubation {
+  Incubation.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        projectId = j['project_id'] as int?,
+        projectName = j['project_name'] as String?,
+        sampleGroup = (j['sample_group'] as String?) ?? '',
+        plates = j['plates'] as int?,
+        seededAt = DateTime.parse(j['seeded_at'] as String).toLocal(),
+        hours = _d(j['hours'])!,
+        temperatureC = _d(j['temperature_c']),
+        readyAt = DateTime.parse(j['ready_at'] as String).toLocal(),
+        notes = (j['notes'] as String?) ?? '',
+        doneAt = j['done_at'] == null ? null : DateTime.parse(j['done_at'] as String).toLocal(),
+        analysesCount = (j['analyses_count'] as int?) ?? 0,
+        createdBy = (j['created_by'] as String?) ?? '',
+        isMine = (j['is_mine'] as bool?) ?? true;
+
+  final int id;
+  final String name;
+  final int? projectId;
+  final String? projectName;
+  final String sampleGroup;
+  final int? plates;
+  final DateTime seededAt;
+  final double hours;
+  final double? temperatureC;
+  final DateTime readyAt;
+  final String notes;
+  final DateTime? doneAt;
+  final int analysesCount;
+  final String createdBy;
+  final bool isMine;
+
+  bool isReady([DateTime? now]) => !(now ?? DateTime.now()).isBefore(readyAt);
+}
+
+/// Lo que guarda un análisis de su siembra.
+class IncubationRecord {
+  IncubationRecord.fromJson(Map<String, dynamic> j)
+      : name = j['name'] as String,
+        hours = _d(j['hours'])!,
+        temperatureC = _d(j['temperature_c']),
+        readAfterHours = _d(j['read_after_hours'])!;
+
+  final String name;
+  final double hours;
+  final double? temperatureC;
+
+  /// Horas reales desde la siembra hasta la foto.
+  final double readAfterHours;
 }
 
 /// Placa dentro de una muestra.

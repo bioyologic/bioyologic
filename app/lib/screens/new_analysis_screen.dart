@@ -8,6 +8,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
+import 'incubations_screen.dart';
 import 'result_screen.dart';
 
 /// Datos de la muestra tras hacer/elegir la foto, y envío al servidor.
@@ -19,6 +20,7 @@ class NewAnalysisScreen extends StatefulWidget {
     this.plateFraction,
     this.fromCamera = false,
     this.projectId,
+    this.incubation,
   });
 
   final Uint8List image;
@@ -26,6 +28,9 @@ class NewAnalysisScreen extends StatefulWidget {
   final double? plateFraction;
   final bool fromCamera;
   final int? projectId;
+
+  /// Siembra de la que sale la placa: se guarda cuántas horas incubó.
+  final Incubation? incubation;
 
   @override
   State<NewAnalysisScreen> createState() => _NewAnalysisScreenState();
@@ -47,6 +52,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
   void initState() {
     super.initState();
     _projectId = widget.projectId;
+    _group.text = widget.incubation?.sampleGroup ?? '';
     final state = AppScope.read(context);
     _volume.text = fmt(state.defaultVolumeMl, 2);
     state.api.projects().then((p) {
@@ -97,6 +103,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
         plateFraction: fraction,
         plateDiameterMm: state.plateDiameterMm,
         sampleGroup: _group.text,
+        incubationId: widget.incubation?.id,
       );
       state.dataChanged();
       if (!mounted) return;
@@ -127,6 +134,19 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
                   child: Container(color: Colors.black, child: Image.memory(widget.image, fit: BoxFit.contain)),
                 ),
               ),
+              if (widget.incubation != null) ...[
+                const SizedBox(height: 12),
+                Card(
+                  color: Bio.greenSoft,
+                  child: ListTile(
+                    leading: const Icon(Icons.timer_outlined, color: Bio.green),
+                    title: Text('Siembra: ${widget.incubation!.name}',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text('${incubationLabel(widget.incubation!)} · '
+                        'lleva ${fmt(DateTime.now().difference(widget.incubation!.seededAt).inMinutes / 60, 1)} h'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               TextFormField(
                 controller: _name,

@@ -59,6 +59,9 @@ cd app && flutter test
 | `GET /analyses/{id}/report/{nombre}.pdf` | Informe PDF |
 | `GET /samples` | Muestras con varias placas y su UFC/mL combinada (ISO 4833-1) |
 | `POST /export-link` | Enlace de descarga del CSV para Excel |
-| `GET/POST/PATCH/DELETE /projects` | Proyectos |
+| `GET/POST/PATCH/DELETE /projects` | Proyectos (propios y compartidos; `my_role`: owner, analista o revisor) |
+| `GET/POST /projects/{id}/members` · `PATCH/DELETE /projects/{id}/members/{user_id}` | Equipo del proyecto: invitar por correo, cambiar rol, quitar o salir |
+| `POST /analyses/{id}/review` · `GET /analyses?to_review=true` | Aprobar o devolver el análisis de otro miembro; cola de pendientes |
+| `GET/POST /incubations` · `PATCH/DELETE /incubations/{id}` | Siembras en incubación (recordatorio de lectura; `incubation_id` al analizar) |
 | `GET /library` | Biblioteca de microorganismos y protocolos |
 | `GET /about` | Licencia, código fuente, datasets y contacto de datos personales |

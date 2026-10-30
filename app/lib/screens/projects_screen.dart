@@ -12,6 +12,8 @@ import '../widgets/common.dart';
 import 'samples_screen.dart';
 import '../widgets/format.dart';
 import 'capture_screen.dart';
+import 'incubations_screen.dart';
+import 'team_screen.dart';
 
 class ProjectsScreen extends StatelessWidget {
   const ProjectsScreen({super.key});
@@ -84,6 +86,15 @@ class _ProjectCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text('${p.analysesCount} análisis · ${friendlyDate(when).split(',').first}',
                     style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12.5)),
+                if (p.shared)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                        p.isOwner
+                            ? 'Compartido con ${p.membersCount} persona${p.membersCount == 1 ? '' : 's'}'
+                            : 'De ${p.ownerName} · eres ${roleLabel(p.myRole).toLowerCase()}',
+                        style: const TextStyle(color: Bio.green, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  ),
                 const SizedBox(height: 8),
                 Row(children: [
                   Expanded(
@@ -129,6 +140,15 @@ class ProjectDetailScreen extends StatelessWidget {
             title: Text(p.name),
             actions: [
               IconButton(
+                tooltip: 'Equipo',
+                icon: Badge(
+                  isLabelVisible: p.shared,
+                  label: Text('${p.membersCount + 1}'),
+                  child: const Icon(Icons.group_outlined),
+                ),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => TeamScreen(p))),
+              ),
+              IconButton(
                 tooltip: 'Exportar a Excel (CSV)',
                 icon: const Icon(Icons.download_outlined),
                 onPressed: () => exportCsv(context, projectId: p.id),
@@ -139,11 +159,16 @@ class ProjectDetailScreen extends StatelessWidget {
                     await showProjectEditor(context, project: p);
                   } else if (v == 'delete') {
                     await _delete(context, p);
+                  } else if (v == 'seed') {
+                    await showIncubationEditor(context, projectId: p.id);
                   }
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('Editar')),
-                  PopupMenuItem(value: 'delete', child: Text('Eliminar proyecto')),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'seed', child: Text('Registrar siembra (incubación)')),
+                  if (p.isOwner) ...const [
+                    PopupMenuItem(value: 'edit', child: Text('Editar')),
+                    PopupMenuItem(value: 'delete', child: Text('Eliminar proyecto')),
+                  ],
                 ],
               ),
             ],
@@ -180,6 +205,18 @@ class ProjectDetailScreen extends StatelessWidget {
                     ]),
                   ),
                 ),
+                if (p.canReview && p.unreviewedCount > 0)
+                  Card(
+                    color: Bio.warn.withValues(alpha: 0.10),
+                    child: ListTile(
+                      leading: const Icon(Icons.rate_review_outlined, color: Bio.warn),
+                      title: Text('${p.unreviewedCount} sin revisar en este proyecto'),
+                      subtitle: const Text('Abre cada placa para aprobarla o devolverla'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context)
+                          .push(MaterialPageRoute(builder: (_) => const ReviewQueueScreen())),
+                    ),
+                  ),
                 const SizedBox(height: 4),
                 if (samples.isNotEmpty) ...[
                   const SectionHeader('UFC/mL por muestra'),
@@ -211,7 +248,8 @@ class ProjectDetailScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('¿Eliminar proyecto?'),
-        content: Text('Se eliminará "${p.name}". Sus ${p.analysesCount} análisis se conservarán sin proyecto.'),
+        content: Text('Se eliminará "${p.name}". Sus ${p.analysesCount} análisis se conservarán sin proyecto'
+            '${p.shared ? ', cada uno en la cuenta de quien lo hizo, y los miembros dejarán de ver el proyecto' : ''}.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
           FilledButton(

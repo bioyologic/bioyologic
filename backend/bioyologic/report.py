@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -28,9 +29,20 @@ MEDIO = {"blood": "Agar sangre", "chocolate": "Agar chocolate", "MacConkey": "Ag
          "Salmonella-Shigella": "Agar Salmonella-Shigella"}
 
 
+# Superíndices que la fuente del PDF (Helvetica, WinAnsi) no tiene: "10⁻³" se dibujaría "10■³".
+_SUPER = dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺", "0123456789-+"))
+_SUPER_RUN = re.compile("[" + "".join(_SUPER) + "]+")
+
+
 def _txt(v) -> str:
     """Texto del usuario dentro de un Paragraph: se escapa (< > & no son etiquetas) y se respetan los saltos."""
-    return escape(str(v)).replace("\n", "<br/>")
+    texto = escape(str(v)).replace("\n", "<br/>")
+    return _SUPER_RUN.sub(lambda m: "<super>" + "".join(_SUPER[c] for c in m.group()) + "</super>", texto)
+
+
+def _plano(v: str) -> str:
+    """Texto sin formato (pie de página): "10⁻³" -> "10^-3"."""
+    return _SUPER_RUN.sub(lambda m: "^" + "".join(_SUPER[c] for c in m.group()), v)
 
 
 def _sci(v: float | None) -> str:
@@ -95,6 +107,7 @@ def _table(rows, fractions, header=True) -> Table:
 
 def _pie(sample: str):
     """Canvas que escribe en cada página "Bioyologic · muestra · Página n de N"."""
+    sample = _plano(sample)
     corto = sample if len(sample) <= 70 else sample[:67] + "…"
 
     class Pie(rl_canvas.Canvas):
@@ -181,6 +194,23 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
         rows.insert(1, ["Corrección manual", Paragraph(
             f"El modelo detectó {corr['detected_total']}; {' y '.join(cambios) or 'sin cambios'} a mano "
             f"({quien}{_fecha(corr['at'])}). " + _leyenda(len(corr["removed"]), len(corr["added"])), cell)])
+    inc = analysis.get("incubation")
+    if inc:
+        temp = f" a {_num(inc['temperature_c'], 0)} °C" if inc.get("temperature_c") is not None else ""
+        rows.append(["Incubación", Paragraph(
+            f"{_num(inc['hours'], 0)} h{temp} (sembrada el {_fecha(inc['seeded_at'])}; "
+            f"foto a las {_num(inc['read_after_hours'], 1)} h)", cell)])
+    rev = analysis.get("review")
+    if rev:
+        if rev["status"] == "pendiente":
+            texto = "Pendiente de revisión"
+        else:
+            quien = f" por {_txt(rev['by'])}" if rev.get("by") else ""
+            texto = f"{'Aprobado' if rev['status'] == 'aprobado' else 'Devuelto para corregir'}{quien}" \
+                    f" ({_fecha(rev['at'])})" + (f": {_txt(rev['note'])}" if rev.get("note") else "")
+        if analysis.get("author_name"):
+            rows.insert(0, ["Analizado por", Paragraph(_txt(analysis["author_name"]), cell)])
+        rows.insert(1 if analysis.get("author_name") else 0, ["Revisión", Paragraph(texto, cell)])
     if analysis.get("sample_group"):
         rows.insert(0, ["Muestra", Paragraph(f"{_txt(analysis['sample_group'])} (una de sus placas)", cell)])
     story += [*titulo("Resumen"), _table(rows, [0.36, 0.64], header=False)]

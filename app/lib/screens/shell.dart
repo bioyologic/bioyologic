@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../state/app_state.dart';
 import '../theme.dart';
 import 'capture_screen.dart';
+import 'tutorial_screen.dart';
 import 'history_screen.dart';
 import 'home_screen.dart';
 import 'profile_screen.dart';
@@ -20,6 +22,18 @@ class Shell extends StatefulWidget {
 
 class _ShellState extends State<Shell> {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Primera vez en este dispositivo: tutorial de cómo tomar una buena foto.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = AppScope.read(context);
+      if (!mounted || state.tutorialSeen) return;
+      state.tutorialSeen = true;
+      TutorialScreen.open(context);
+    });
+  }
 
   void _select(int i) => setState(() => _tab = i);
 

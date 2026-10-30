@@ -79,13 +79,19 @@ class AnalysisTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                 const SizedBox(height: 2),
-                Text('${a.summary.total} colonias${a.projectName != null ? ' · ${a.projectName}' : ''}',
+                Text('${a.summary.total} colonias${a.projectName != null ? ' · ${a.projectName}' : ''}'
+                    '${a.isMine ? '' : ' · ${a.authorName}'}',
                     maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: muted, fontSize: 13)),
                 const SizedBox(height: 2),
                 Text(friendlyDate(a.createdAt), style: TextStyle(color: muted, fontSize: 12)),
               ]),
             ),
-            if (sel == null)
+            if (sel == null && a.review != null && !a.review!.pending)
+              Icon(a.review!.status == 'aprobado' ? Icons.verified : Icons.reply,
+                  color: a.review!.status == 'aprobado' ? Bio.ok : Bio.danger, size: 20)
+            else if (sel == null && a.review?.pending == true)
+              const Icon(Icons.hourglass_top, color: Bio.warn, size: 20)
+            else if (sel == null)
               StatusChip(a.summary.status)
             else
               Checkbox(value: sel, onChanged: (_) => onTap?.call()),
@@ -93,7 +99,8 @@ class AnalysisTile extends StatelessWidget {
         ),
       ),
     );
-    if (onDeleted == null || sel != null) return card;
+    // Solo su autor puede borrar un análisis (en proyectos compartidos hay placas de otros miembros).
+    if (onDeleted == null || sel != null || !a.isMine) return card;
     return Dismissible(
       key: ValueKey('analisis-${a.id}'),
       direction: DismissDirection.endToStart,

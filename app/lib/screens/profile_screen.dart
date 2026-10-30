@@ -5,7 +5,9 @@ import '../api/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'incubations_screen.dart';
 import 'info_screens.dart';
+import 'tutorial_screen.dart';
 import 'projects_screen.dart';
 import 'settings_screen.dart';
 import 'start_screen.dart';
@@ -59,6 +61,8 @@ class ProfileScreen extends StatelessWidget {
             Card(
               child: Column(children: [
                 _Item(Icons.person_outline, 'Mi perfil', () => push(const EditProfileScreen())),
+                _Item(Icons.timer_outlined, 'Incubación (recordatorios)', () => push(const IncubationsScreen())),
+                _Item(Icons.photo_camera_outlined, 'Cómo tomar una buena foto', () => TutorialScreen.open(context)),
                 _Item(Icons.settings_outlined, 'Configuración', () => push(const SettingsScreen())),
                 _Item(Icons.help_outline, 'Ayuda y soporte', () => push(const HelpScreen())),
                 _Item(Icons.description_outlined, 'Acerca de, licencia y privacidad', () => push(const AboutScreen()), last: true),

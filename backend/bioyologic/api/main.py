@@ -20,8 +20,9 @@ Variables de entorno:
     BIOYOLOGIC_SMTP_*         envío de correos (ver bioyologic/mailer.py). Con SMTP configurado, las cuentas
                               nuevas deben verificar su correo y se puede recuperar la contraseña.
 
-Cuentas: cada usuario solo ve sus proyectos y análisis. La app envía `Authorization: Bearer <token>`;
-las imágenes y el PDF de un análisis se piden con la clave secreta `?key=` que viene en sus URLs.
+Cuentas: cada usuario ve sus proyectos y análisis, y los de los proyectos que otros comparten con él (como
+analista o revisor). La app envía `Authorization: Bearer <token>`; las imágenes y el PDF de un análisis se piden
+con la clave secreta `?key=` que viene en sus URLs.
 
 Si existe app/build/web (flutter build web), la app se sirve en /app.
 """
@@ -36,6 +37,7 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict, deque
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
@@ -145,8 +147,23 @@ def _warm_up() -> None:
 
 
 # --------------------------------------------------------------------- utilidades
-def _with_urls(a: dict) -> dict:
+def _permissions(a: dict, user: dict, roles: dict) -> dict:
+    """Qué puede hacer el usuario con un análisis.
+
+    El autor lo edita, corrige y borra. En un proyecto compartido, el dueño y los revisores también corrigen
+    el conteo, y aprueban o devuelven los análisis de los demás (nunca el propio: lo revisa otra persona)."""
+    role, shared = roles.get(a.get("project_id"), (None, False))
+    mine = a.get("user_id") == user["id"]
+    return {"is_mine": mine, "my_role": role,
+            "can_edit": mine,
+            "can_correct": mine or role in ("owner", "revisor"),
+            "can_review": shared and not mine and role in ("owner", "revisor")}
+
+
+def _with_urls(a: dict, user: dict | None = None, roles: dict | None = None) -> dict:
     """URLs de imágenes y PDF con la clave secreta del análisis (no se pueden adivinar)."""
+    if user is not None:
+        a.update(_permissions(a, user, roles or {}))
     aid, key = a["id"], a.pop("access_key")
     a.pop("user_id", None)
     version = a.pop("annotated_version", 0)
@@ -157,11 +174,24 @@ def _with_urls(a: dict) -> dict:
     return a
 
 
+def _out(store: Store, a: dict, user: dict) -> dict:
+    return _with_urls(a, user, store.roles(user["id"]))
+
+
 def _project_out(p: dict) -> dict:
     cover, key = p.pop("cover_analysis_id", None), p.pop("cover_access_key", None)
     p.pop("user_id", None)
     p["cover_url"] = f"/analyses/{cover}/image/thumb?key={key}" if cover else None
     p["progress"] = min(1.0, p["analyses_count"] / max(1, p["target_samples"]))
+    p["shared"] = p["members_count"] > 0
+    if not p["shared"]:
+        p["unreviewed_count"] = 0  # sin miembros no hay revisión
+    return p
+
+
+def _owner_only(p: dict) -> dict:
+    if p.get("my_role") != "owner":
+        raise HTTPException(403, "Solo quien creó el proyecto puede hacer esto")
     return p
 
 
@@ -483,6 +513,7 @@ async def create_analysis(
     plate_diameter_mm: float = Form(90.0, gt=0),
     notes: str = Form(""),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
+    incubation_id: int | None = Form(None, description="Siembra en incubación de la que sale la placa"),
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
     species_clf: SpeciesClassifier | None = Depends(get_species),
@@ -495,6 +526,9 @@ async def create_analysis(
         raise HTTPException(422, "El volumen debe ser > 0")
     if project_id is not None:
         _require(store.get_project(project_id, user["id"]), "Proyecto")
+    incubation = None
+    if incubation_id is not None:
+        incubation = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
     data = await image.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"Imagen demasiado grande (máx. {MAX_UPLOAD_MB:g} MB)")
@@ -507,21 +541,35 @@ async def create_analysis(
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
     result["quality"] = assess(img)
+    if incubation is not None:
+        # Copia en el resultado: el informe la conserva aunque luego se borre la siembra.
+        result["incubation"] = _incubation_record(incubation)
     saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
                                original=img, annotated=annotated, project_id=project_id,
-                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)
-    return _with_urls(saved)
+                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group,
+                               incubation_id=incubation_id)
+    return _out(store, saved, user)
 
 
 @app.get("/analyses")
 def list_analyses(project_id: int | None = None, q: str = "", limit: int = 50, offset: int = 0,
-                  store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> list[dict]:
-    return [_with_urls(a) for a in store.list_analyses(user["id"], project_id, q, min(limit, 200), offset)]
+                  to_review: bool = False, store: Store = Depends(get_store),
+                  user: dict = Depends(verified_user)) -> list[dict]:
+    """Análisis propios y de proyectos compartidos. `to_review`: los que el usuario debe revisar."""
+    roles = store.roles(user["id"])
+    return [_with_urls(a, user, roles)
+            for a in store.list_analyses(user["id"], project_id, q, min(limit, 200), offset, to_review=to_review)]
 
 
 @app.get("/analyses/{analysis_id}")
 def get_analysis(analysis_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
-    return _with_urls(_require(store.get_analysis(analysis_id, user["id"]), "Análisis"))
+    return _out(store, _require(store.get_analysis(analysis_id, user["id"]), "Análisis"), user)
+
+
+def _author_only(a: dict, user: dict) -> dict:
+    if a["user_id"] != user["id"]:
+        raise HTTPException(403, "Solo quien hizo el análisis puede cambiarlo o borrarlo")
+    return a
 
 
 class AnalysisPatch(BaseModel):
@@ -534,11 +582,11 @@ class AnalysisPatch(BaseModel):
 @app.patch("/analyses/{analysis_id}")
 def update_analysis(analysis_id: int, body: AnalysisPatch, store: Store = Depends(get_store),
                     user: dict = Depends(verified_user)) -> dict:
-    _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
+    _author_only(_require(store.get_analysis(analysis_id, user["id"], False), "Análisis"), user)
     fields = body.model_dump(exclude_unset=True)
     if fields.get("project_id"):
         _require(store.get_project(fields["project_id"], user["id"]), "Proyecto")
-    return _with_urls(store.update_analysis(analysis_id, user["id"], **fields))
+    return _out(store, store.update_analysis(analysis_id, user["id"], **fields), user)
 
 
 class Added(BaseModel):
@@ -561,6 +609,8 @@ def correct_colonies(analysis_id: int, body: Correction, store: Store = Depends(
     el conteo, las UFC/mL y la imagen anotada, y queda registrada en el análisis y en el reporte.
     """
     a = _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
+    if not _permissions(a, user, store.roles(user["id"]))["can_correct"]:
+        raise HTTPException(403, "Solo el autor, el dueño del proyecto o un revisor pueden corregir el conteo")
     result = store.result_of(analysis_id, user["id"])
     image = cv2.imread(str(store.image_path(analysis_id, "original")), cv2.IMREAD_COLOR)
     if image is None:
@@ -573,13 +623,35 @@ def correct_colonies(analysis_id: int, body: Correction, store: Store = Depends(
         raise HTTPException(422, "Hay colonias para quitar que no existen en este análisis")
     new, annotated = recount(image, result, set(body.removed), [(c.x, c.y, c.r) for c in body.added],
                              a["dilution"], a["volume_ml"], by=user["name"])
-    return _with_urls(store.save_result(analysis_id, user["id"], new, annotated))
+    return _out(store, store.save_result(analysis_id, user["id"], new, annotated), user)
+
+
+class ReviewIn(BaseModel):
+    status: str = Field(..., description="aprobado | devuelto | '' (quitar la revisión)")
+    note: str = Field("", max_length=1000)
+
+
+@app.post("/analyses/{analysis_id}/review")
+def review_analysis(analysis_id: int, body: ReviewIn, store: Store = Depends(get_store),
+                    user: dict = Depends(verified_user)) -> dict:
+    """Revisión en un proyecto compartido: el dueño o un revisor aprueba el análisis de otro miembro, o lo
+    devuelve con una nota para que se corrija. Queda registrado quién y cuándo (también en el PDF)."""
+    a = _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
+    if body.status not in ("aprobado", "devuelto", ""):
+        raise HTTPException(422, "Estado de revisión no válido")
+    if not _permissions(a, user, store.roles(user["id"]))["can_review"]:
+        raise HTTPException(403, "Solo el dueño del proyecto o un revisor pueden revisar los análisis de otros miembros")
+    if body.status == "devuelto" and not body.note.strip():
+        raise HTTPException(422, "Explica qué hay que corregir")
+    store.set_review(analysis_id, user, body.status, body.note.strip())
+    return _out(store, store.get_analysis(analysis_id, user["id"]), user)
 
 
 @app.delete("/analyses/{analysis_id}", status_code=204)
 def delete_analysis(analysis_id: int, store: Store = Depends(get_store),
                     user: dict = Depends(verified_user)) -> Response:
-    _require(store.delete_analysis(analysis_id, user["id"]) or None, "Análisis")
+    _author_only(_require(store.get_analysis(analysis_id, user["id"], False), "Análisis"), user)
+    store.delete_analysis(analysis_id, user["id"])
     return Response(status_code=204)
 
 
@@ -739,13 +811,163 @@ def get_project(project_id: int, store: Store = Depends(get_store), user: dict =
 @app.patch("/projects/{project_id}")
 def update_project(project_id: int, body: ProjectPatch, store: Store = Depends(get_store),
                    user: dict = Depends(verified_user)) -> dict:
-    _require(store.get_project(project_id, user["id"]), "Proyecto")
+    _owner_only(_require(store.get_project(project_id, user["id"]), "Proyecto"))
     return _project_out(store.update_project(project_id, user["id"], **body.model_dump(exclude_unset=True)))
 
 
 @app.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> Response:
-    _require(store.delete_project(project_id, user["id"]) or None, "Proyecto")
+    """Los análisis no se borran: cada uno queda, sin proyecto, en la cuenta de quien lo hizo."""
+    _owner_only(_require(store.get_project(project_id, user["id"]), "Proyecto"))
+    store.delete_project(project_id, user["id"])
+    return Response(status_code=204)
+
+
+# --------------------------------------------------------------------- trabajo en equipo
+class MemberIn(BaseModel):
+    email: str = Field(..., max_length=254)
+    role: str = Field("analista", description="analista (cuenta placas) | revisor (además aprueba)")
+
+
+class MemberPatch(BaseModel):
+    role: str
+
+
+def _member_out(m: dict, show_email: bool) -> dict:
+    return {"user_id": m["user_id"], "name": m["name"], "role": m["role"], "added_at": m["added_at"],
+            "email": m["email"] if show_email else None}
+
+
+@app.get("/projects/{project_id}/members")
+def list_members(project_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> list[dict]:
+    """Dueño y miembros. Los correos solo los ve el dueño (los demás ven nombre y rol)."""
+    p = _require(store.get_project(project_id, user["id"]), "Proyecto")
+    return [_member_out(m, p["my_role"] == "owner" or m["user_id"] == user["id"]) for m in store.members(project_id)]
+
+
+@app.post("/projects/{project_id}/members", status_code=201)
+def add_member(project_id: int, body: MemberIn, store: Store = Depends(get_store),
+               user: dict = Depends(verified_user), _: None = Depends(login_limit)) -> list[dict]:
+    """Comparte el proyecto con otra cuenta de Bioyologic, por su correo."""
+    _owner_only(_require(store.get_project(project_id, user["id"]), "Proyecto"))
+    if body.role not in ("analista", "revisor"):
+        raise HTTPException(422, "El rol debe ser analista o revisor")
+    other = store.user_by_email(body.email.strip().lower())
+    if other is None:
+        raise HTTPException(404, "No hay ninguna cuenta de Bioyologic con ese correo. "
+                                 "Pídele que se registre y vuelve a intentarlo.")
+    if other["id"] == user["id"]:
+        raise HTTPException(422, "Ya eres el dueño de este proyecto")
+    store.set_member(project_id, other["id"], body.role)
+    return [_member_out(m, True) for m in store.members(project_id)]
+
+
+@app.patch("/projects/{project_id}/members/{member_id}")
+def change_member(project_id: int, member_id: int, body: MemberPatch, store: Store = Depends(get_store),
+                  user: dict = Depends(verified_user)) -> list[dict]:
+    _owner_only(_require(store.get_project(project_id, user["id"]), "Proyecto"))
+    if body.role not in ("analista", "revisor"):
+        raise HTTPException(422, "El rol debe ser analista o revisor")
+    _require(next((m for m in store.members(project_id) if m["user_id"] == member_id and m["role"] != "owner"),
+                  None), "Miembro")
+    store.set_member(project_id, member_id, body.role)
+    return [_member_out(m, True) for m in store.members(project_id)]
+
+
+@app.delete("/projects/{project_id}/members/{member_id}", status_code=204)
+def remove_member(project_id: int, member_id: int, store: Store = Depends(get_store),
+                  user: dict = Depends(verified_user)) -> Response:
+    """El dueño quita a un miembro, o un miembro sale del proyecto. Sus análisis siguen siendo suyos."""
+    p = _require(store.get_project(project_id, user["id"]), "Proyecto")
+    if member_id != user["id"]:
+        _owner_only(p)
+    _require(store.remove_member(project_id, member_id) or None, "Miembro")
+    return Response(status_code=204)
+
+
+# --------------------------------------------------------------------- siembras en incubación
+class IncubationIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    hours: float = Field(..., gt=0, le=24 * 14)
+    temperature_c: float | None = Field(None, ge=0, le=80)
+    seeded_at: datetime | None = Field(None, description="Hora de la siembra (por defecto, ahora)")
+    project_id: int | None = None
+    sample_group: str = Field("", max_length=120)
+    plates: int | None = Field(None, ge=1, le=500)
+    notes: str = Field("", max_length=1000)
+
+
+class IncubationPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    hours: float | None = Field(None, gt=0, le=24 * 14)
+    temperature_c: float | None = Field(None, ge=0, le=80)
+    plates: int | None = Field(None, ge=1, le=500)
+    notes: str | None = Field(None, max_length=1000)
+    done: bool | None = Field(None, description="true = ya se leyeron las placas")
+
+
+def _ready_at(i: dict) -> datetime:
+    return datetime.fromisoformat(i["seeded_at"]) + timedelta(hours=i["hours"])
+
+
+def _incubation_out(i: dict, user: dict) -> dict:
+    i = dict(i)
+    i["is_mine"] = i.pop("user_id") == user["id"]
+    i["ready_at"] = _ready_at(i).isoformat(timespec="seconds")
+    return i
+
+
+def _incubation_record(i: dict) -> dict:
+    """Lo que el análisis guarda de su siembra: horas reales de incubación al tomar la foto."""
+    leida = (datetime.now().astimezone() - datetime.fromisoformat(i["seeded_at"])).total_seconds() / 3600
+    return {"name": i["name"], "seeded_at": i["seeded_at"], "hours": i["hours"],
+            "temperature_c": i["temperature_c"], "read_after_hours": round(leida, 1)}
+
+
+def _aware(dt: datetime) -> str:
+    """Fecha ISO con zona horaria (si la app la manda sin zona, se toma la del servidor)."""
+    return (dt if dt.tzinfo else dt.astimezone()).isoformat(timespec="seconds")
+
+
+@app.get("/incubations")
+def list_incubations(include_done: bool = False, store: Store = Depends(get_store),
+                     user: dict = Depends(verified_user)) -> list[dict]:
+    """Siembras por leer (propias y de proyectos compartidos), de la que se lee primero a la última."""
+    return [_incubation_out(i, user) for i in store.list_incubations(user["id"], include_done)]
+
+
+@app.post("/incubations", status_code=201)
+def create_incubation(body: IncubationIn, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
+    """Registra una siembra: la app avisa cuando las placas estén listas para leer."""
+    if body.project_id is not None:
+        _require(store.get_project(body.project_id, user["id"]), "Proyecto")
+    i = store.create_incubation(
+        user["id"], name=body.name.strip(), hours=body.hours, temperature_c=body.temperature_c,
+        seeded_at=_aware(body.seeded_at) if body.seeded_at else None, project_id=body.project_id,
+        sample_group=body.sample_group, plates=body.plates, notes=body.notes.strip())
+    return _incubation_out(i, user)
+
+
+@app.patch("/incubations/{incubation_id}")
+def update_incubation(incubation_id: int, body: IncubationPatch, store: Store = Depends(get_store),
+                      user: dict = Depends(verified_user)) -> dict:
+    """Cualquier miembro puede marcarla como leída; los demás cambios, solo quien la creó."""
+    i = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
+    fields = body.model_dump(exclude_unset=True)
+    done = fields.pop("done", None)
+    if fields and i["user_id"] != user["id"]:
+        raise HTTPException(403, "Solo quien registró la siembra puede cambiarla")
+    if done is not None:
+        fields["done_at"] = datetime.now().astimezone().isoformat(timespec="seconds") if done else None
+    return _incubation_out(store.update_incubation(incubation_id, user["id"], **fields), user)
+
+
+@app.delete("/incubations/{incubation_id}", status_code=204)
+def delete_incubation(incubation_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> Response:
+    i = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
+    if i["user_id"] != user["id"]:
+        raise HTTPException(403, "Solo quien registró la siembra puede borrarla")
+    store.delete_incubation(incubation_id, user["id"])
     return Response(status_code=204)
 
 

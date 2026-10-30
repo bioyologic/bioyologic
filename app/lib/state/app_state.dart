@@ -176,6 +176,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// El tutorial de primer uso ya se mostró en este dispositivo.
+  bool get tutorialSeen => _flag('tutorial_seen', false);
+  set tutorialSeen(bool v) => _setFlag('tutorial_seen', v);
+
   bool get darkMode => _flag('dark_mode', false);
   set darkMode(bool v) => _setFlag('dark_mode', v);
 

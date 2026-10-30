@@ -12,6 +12,7 @@ import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'correction_screen.dart';
 import 'samples_screen.dart';
+import 'team_screen.dart';
 
 class ResultScreen extends StatelessWidget {
   const ResultScreen({super.key, required this.analysisId});
@@ -124,12 +125,15 @@ class _ResultView extends StatelessWidget {
             ),
             PopupMenuButton<String>(
               onSelected: (v) => _menu(context, v),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'correct', child: Text('Corregir conteo')),
-                PopupMenuItem(value: 'group', child: Text('Asignar a una muestra')),
-                PopupMenuItem(value: 'rename', child: Text('Renombrar')),
-                PopupMenuItem(value: 'move', child: Text('Mover a proyecto')),
-                PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+              itemBuilder: (_) => [
+                if (a.canCorrect) const PopupMenuItem(value: 'correct', child: Text('Corregir conteo')),
+                // Renombrar, mover y borrar: solo quien hizo el análisis.
+                if (a.canEdit) ...const [
+                  PopupMenuItem(value: 'group', child: Text('Asignar a una muestra')),
+                  PopupMenuItem(value: 'rename', child: Text('Renombrar')),
+                  PopupMenuItem(value: 'move', child: Text('Mover a proyecto')),
+                  PopupMenuItem(value: 'delete', child: Text('Eliminar')),
+                ],
               ],
             ),
           ],
@@ -139,8 +143,8 @@ class _ResultView extends StatelessWidget {
           const TabBar(tabs: [Tab(text: 'Resumen'), Tab(text: 'Colonias'), Tab(text: 'Morfología')]),
           Expanded(
             child: TabBarView(children: [
-              _SummaryTab(a, onDownload: () => _download(context)),
-              _ColoniesTab(a, onCorrect: () => _menu(context, 'correct')),
+              _SummaryTab(a, onDownload: () => _download(context), reload: reload),
+              _ColoniesTab(a, onCorrect: a.canCorrect ? () => _menu(context, 'correct') : null),
               _MorphologyTab(a),
             ]),
           ),
@@ -195,7 +199,8 @@ class _Header extends StatelessWidget {
                   ),
               ]),
               const SizedBox(height: 4),
-              Text('${friendlyDate(a.createdAt)}${a.projectName != null ? ' · ${a.projectName}' : ''}',
+              Text('${friendlyDate(a.createdAt)}${a.projectName != null ? ' · ${a.projectName}' : ''}'
+                  '${a.isMine ? '' : ' · ${a.authorName}'}',
                   style: TextStyle(color: muted, fontSize: 12.5)),
             ]),
           ),
@@ -207,9 +212,10 @@ class _Header extends StatelessWidget {
 
 // ------------------------------------------------------------------ Resumen
 class _SummaryTab extends StatelessWidget {
-  const _SummaryTab(this.a, {required this.onDownload});
+  const _SummaryTab(this.a, {required this.onDownload, required this.reload});
   final Analysis a;
   final VoidCallback onDownload;
+  final Future<void> Function() reload;
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +231,7 @@ class _SummaryTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
+        if (a.review != null) ReviewCard(a, onChanged: reload),
         if (issues.isNotEmpty)
           Card(
             color: Bio.warn.withValues(alpha: 0.10),
@@ -285,10 +292,15 @@ class _SummaryTab extends StatelessWidget {
             _Row(Icons.palette_outlined, 'Color predominante', capitalize(predColor), swatch: swatch),
             _Row(Icons.blur_circular, 'Bordes', marginLabels[s.predominant['margin']] ?? '—'),
             _Row(Icons.science_outlined, 'UFC/mL', s.cfuPerMl == null ? 'Sin dilución' : scientific(s.cfuPerMl!),
-                last: a.dilution == null),
+                last: a.dilution == null && a.incubation == null),
             if (a.dilution != null)
               _Row(Icons.water_drop_outlined, 'Siembra',
-                  '${dilutionLabel(a.dilution!)} · ${fmt(a.volumeMl, 2)} mL', last: true),
+                  '${dilutionLabel(a.dilution!)} · ${fmt(a.volumeMl, 2)} mL', last: a.incubation == null),
+            if (a.incubation != null)
+              _Row(Icons.timer_outlined, 'Incubación',
+                  '${fmt(a.incubation!.readAfterHours, 1)} h de ${fmt(a.incubation!.hours, 0)} h'
+                  '${a.incubation!.temperatureC == null ? '' : ' · ${fmt(a.incubation!.temperatureC, 0)} °C'}',
+                  last: true),
           ]),
         ),
         const SizedBox(height: 12),
@@ -492,7 +504,7 @@ class _NotesFieldState extends State<_NotesField> {
 class _ColoniesTab extends StatelessWidget {
   const _ColoniesTab(this.a, {required this.onCorrect});
   final Analysis a;
-  final VoidCallback onCorrect;
+  final VoidCallback? onCorrect;
 
   @override
   Widget build(BuildContext context) {

@@ -3,9 +3,13 @@
     <root>/bioyologic.db
     <root>/images/<id>_original.jpg | <id>_annotated.jpg | <id>_thumb.jpg
 
-Cada proyecto y análisis pertenece a un usuario (`user_id`) y solo su dueño lo ve. Los datos
-anteriores a las cuentas quedan sin dueño (`user_id` NULL): nadie los ve hasta que se asignan o se
-borran con `python -m bioyologic.manage`.
+Cada proyecto y análisis pertenece a un usuario (`user_id`). Un proyecto se puede compartir con otras
+cuentas (`project_members`, rol analista o revisor): sus miembros ven y analizan las placas del proyecto, y
+los revisores (y el dueño) aprueban o devuelven los análisis de los demás. Todo lo que no está en un
+proyecto compartido solo lo ve su autor. Los datos anteriores a las cuentas quedan sin dueño (`user_id`
+NULL): nadie los ve hasta que se asignan o se borran con `python -m bioyologic.manage`.
+
+Las siembras en incubación (`incubations`) recuerdan cuándo leer las placas.
 """
 
 from __future__ import annotations
@@ -72,7 +76,34 @@ CREATE TABLE IF NOT EXISTS analyses (
     cfu_per_ml REAL,
     status TEXT NOT NULL,
     notes TEXT NOT NULL DEFAULT '',
-    result_json TEXT NOT NULL
+    result_json TEXT NOT NULL,
+    review_status TEXT NOT NULL DEFAULT '',
+    reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewer_name TEXT NOT NULL DEFAULT '',
+    reviewed_at TEXT,
+    review_note TEXT NOT NULL DEFAULT '',
+    incubation_id INTEGER REFERENCES incubations(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS project_members (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,             -- analista | revisor (el dueño está en projects.user_id)
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS incubations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    sample_group TEXT NOT NULL DEFAULT '',
+    plates INTEGER,
+    seeded_at TEXT NOT NULL,
+    hours REAL NOT NULL,
+    temperature_c REAL,
+    notes TEXT NOT NULL DEFAULT '',
+    done_at TEXT,
+    created_at TEXT NOT NULL
 );
 """
 
@@ -83,14 +114,24 @@ MIGRATIONS = {
     "projects": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE"},
     "analyses": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE", "access_key": "TEXT",
                  # Placas de una misma muestra (diluciones y réplicas) comparten este nombre.
-                 "sample_group": "TEXT NOT NULL DEFAULT ''"},
+                 "sample_group": "TEXT NOT NULL DEFAULT ''",
+                 # Revisión en proyectos compartidos: '' (sin revisar) | aprobado | devuelto.
+                 "review_status": "TEXT NOT NULL DEFAULT ''",
+                 "reviewed_by": "INTEGER REFERENCES users(id) ON DELETE SET NULL",
+                 "reviewer_name": "TEXT NOT NULL DEFAULT ''",
+                 "reviewed_at": "TEXT",
+                 "review_note": "TEXT NOT NULL DEFAULT ''",
+                 "incubation_id": "INTEGER REFERENCES incubations(id) ON DELETE SET NULL"},
 }
 
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_analyses_project ON analyses(project_id);
 CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at);
 CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id);
+CREATE INDEX IF NOT EXISTS idx_analyses_incubation ON analyses(incubation_id);
 CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_members_user ON project_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_incubations_user ON incubations(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
@@ -98,6 +139,11 @@ IMAGE_KINDS = ("original", "annotated", "thumb")
 SESSION_DAYS = 30
 USER_FIELDS = "id, email, name, role, institution, created_at, consent_at, consent_version, email_verified"
 CODE_ATTEMPTS = 5  # intentos por código antes de invalidarlo
+MEMBER_ROLES = ("analista", "revisor")
+REVIEW_STATES = ("aprobado", "devuelto")
+
+# Proyectos a los que entra un usuario: los suyos y los compartidos con él (2 parámetros: user_id, user_id).
+_MY_PROJECTS = "(SELECT id FROM projects WHERE user_id = ? UNION SELECT project_id FROM project_members WHERE user_id = ?)"
 
 
 def _now() -> str:
@@ -245,19 +291,28 @@ class Store:
         self._exec("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 
     def delete_user(self, user_id: int) -> None:
-        """Supresión total (Ley 1581): cuenta, sesiones, proyectos, análisis y fotos."""
+        """Supresión total (Ley 1581): cuenta, sesiones, proyectos, análisis, siembras y fotos.
+
+        Los análisis que otros miembros hicieron en sus proyectos compartidos siguen siendo de esos miembros
+        (quedan sin proyecto), y en las revisiones que hizo su nombre se reemplaza."""
         for r in self._all("SELECT id FROM analyses WHERE user_id = ?", (user_id,)):
             self._remove_images(r["id"])
         self._exec("DELETE FROM analyses WHERE user_id = ?", (user_id,))
+        self._exec("UPDATE analyses SET reviewer_name = 'Cuenta eliminada' WHERE reviewed_by = ?", (user_id,))
+        self._exec("DELETE FROM incubations WHERE user_id = ?", (user_id,))
         self._exec("DELETE FROM projects WHERE user_id = ?", (user_id,))
         self._exec("DELETE FROM users WHERE id = ?", (user_id,))
 
     def export_user(self, user_id: int) -> dict:
         """Todo lo que el servidor guarda de un usuario, para el derecho de acceso."""
         return {"exported_at": _now(), "user": self.get_user(user_id),
-                "projects": self.list_projects(user_id),
+                "projects": self.list_projects(user_id, own_only=True),
+                "memberships": self._all(
+                    """SELECT p.name AS project, m.role, m.added_at FROM project_members m
+                       JOIN projects p ON p.id = m.project_id WHERE m.user_id = ?""", (user_id,)),
+                "incubations": self._all("SELECT * FROM incubations WHERE user_id = ?", (user_id,)),
                 "analyses": [self.get_analysis(a["id"], user_id)
-                             for a in self.list_analyses(user_id, limit=1_000_000)]}
+                             for a in self.list_analyses(user_id, limit=1_000_000, mine_only=True)]}
 
     # ---------------------------------------------------------------- sesiones
     def create_session(self, user_id: int) -> str:
@@ -291,6 +346,9 @@ class Store:
         SELECT p.*, COUNT(a.id) AS analyses_count,
                COALESCE(SUM(a.total), 0) AS colonies_total,
                MAX(a.created_at) AS last_analysis_at,
+               COALESCE(SUM(CASE WHEN a.review_status = '' THEN 1 ELSE 0 END), 0) AS unreviewed_count,
+               (SELECT COUNT(*) FROM project_members m WHERE m.project_id = p.id) AS members_count,
+               (SELECT name FROM users u WHERE u.id = p.user_id) AS owner_name,
                (SELECT id FROM analyses WHERE project_id = p.id
                 ORDER BY created_at DESC, id DESC LIMIT 1) AS cover_analysis_id,
                (SELECT access_key FROM analyses WHERE project_id = p.id
@@ -298,14 +356,58 @@ class Store:
         FROM projects p LEFT JOIN analyses a ON a.project_id = p.id
     """
 
-    def get_project(self, project_id: int, user_id: int) -> dict | None:
-        rows = self._all(self._PROJECT_SELECT + " WHERE p.id = ? AND p.user_id = ? GROUP BY p.id",
-                         (project_id, user_id))
-        return rows[0] if rows else None
+    def _with_role(self, rows: list[dict], user_id: int) -> list[dict]:
+        roles = self.roles(user_id)
+        for p in rows:
+            p["my_role"] = roles.get(p["id"], (None, False))[0]
+        return rows
 
-    def list_projects(self, user_id: int) -> list[dict]:
-        return self._all(self._PROJECT_SELECT + " WHERE p.user_id = ?"
-                         " GROUP BY p.id ORDER BY COALESCE(MAX(a.created_at), p.created_at) DESC", (user_id,))
+    def get_project(self, project_id: int, user_id: int) -> dict | None:
+        """Proyecto propio o compartido con el usuario (`my_role`: owner | analista | revisor)."""
+        rows = self._all(self._PROJECT_SELECT + f" WHERE p.id = ? AND p.id IN {_MY_PROJECTS} GROUP BY p.id",
+                         (project_id, user_id, user_id))
+        return self._with_role(rows, user_id)[0] if rows else None
+
+    def list_projects(self, user_id: int, own_only: bool = False) -> list[dict]:
+        where, params = (("p.user_id = ?", (user_id,)) if own_only
+                         else (f"p.id IN {_MY_PROJECTS}", (user_id, user_id)))
+        return self._with_role(self._all(
+            self._PROJECT_SELECT + f" WHERE {where}"
+            " GROUP BY p.id ORDER BY COALESCE(MAX(a.created_at), p.created_at) DESC", params), user_id)
+
+    def roles(self, user_id: int) -> dict[int, tuple[str, bool]]:
+        """{project_id: (rol del usuario, ¿compartido?)} de todos los proyectos a los que entra."""
+        rows = self._all(
+            """SELECT p.id, CASE WHEN p.user_id = ? THEN 'owner' ELSE m.role END AS role,
+                      EXISTS (SELECT 1 FROM project_members x WHERE x.project_id = p.id) AS shared
+               FROM projects p LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = ?
+               WHERE p.user_id = ? OR m.user_id IS NOT NULL""", (user_id, user_id, user_id))
+        return {r["id"]: (r["role"], bool(r["shared"])) for r in rows}
+
+    def project_role(self, project_id: int | None, user_id: int) -> str | None:
+        return None if project_id is None else self.roles(user_id).get(project_id, (None, False))[0]
+
+    # ---------------------------------------------------------------- miembros de un proyecto
+    def members(self, project_id: int) -> list[dict]:
+        """Dueño y miembros del proyecto."""
+        return self._all(
+            """SELECT u.id AS user_id, u.name, u.email, 'owner' AS role, p.created_at AS added_at
+               FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = ?
+               UNION ALL
+               SELECT u.id, u.name, u.email, m.role, m.added_at
+               FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = ?
+               ORDER BY added_at""", (project_id, project_id))
+
+    def set_member(self, project_id: int, user_id: int, role: str) -> None:
+        if role not in MEMBER_ROLES:
+            raise ValueError(role)
+        self._exec("""INSERT INTO project_members (project_id, user_id, role, added_at) VALUES (?, ?, ?, ?)
+                      ON CONFLICT (project_id, user_id) DO UPDATE SET role = excluded.role""",
+                   (project_id, user_id, role, _now()))
+
+    def remove_member(self, project_id: int, user_id: int) -> bool:
+        return self._exec("DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
+                          (project_id, user_id)).rowcount > 0
 
     def update_project(self, project_id: int, user_id: int, **fields) -> dict | None:
         allowed = {k: v for k, v in fields.items()
@@ -324,21 +426,26 @@ class Store:
     def add_analysis(self, *, user_id: int, sample_name: str, result: dict, original: np.ndarray,
                      annotated: np.ndarray, project_id: int | None = None,
                      dilution: float | None = None, volume_ml: float | None = None,
-                     notes: str = "", sample_group: str = "") -> dict:
+                     notes: str = "", sample_group: str = "", incubation_id: int | None = None) -> dict:
         s = result["summary"]
         cur = self._exec(
             """INSERT INTO analyses (user_id, access_key, project_id, sample_name, sample_group, created_at,
-                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json, incubation_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, secrets.token_urlsafe(16), project_id, sample_name, sample_group.strip(),
              result.get("analyzed_at", _now()),
              dilution, volume_ml, result.get("mm_per_px"), s["total"], s["cfu_per_ml"], s["status"], notes,
-             json.dumps(result, ensure_ascii=False)))
+             json.dumps(result, ensure_ascii=False), incubation_id))
         aid = cur.lastrowid
         q = [cv2.IMWRITE_JPEG_QUALITY, 90]
         cv2.imwrite(str(self.image_path(aid, "original")), original, q)
         cv2.imwrite(str(self.image_path(aid, "annotated")), annotated, q)
         cv2.imwrite(str(self.image_path(aid, "thumb")), _thumbnail(original), q)
+        if incubation_id is not None:
+            # Siembra con número de placas: se da por leída cuando se analizaron todas.
+            self._exec("""UPDATE incubations SET done_at = ? WHERE id = ? AND done_at IS NULL AND plates IS NOT NULL
+                          AND plates <= (SELECT COUNT(*) FROM analyses WHERE incubation_id = ?)""",
+                       (_now(), incubation_id, incubation_id))
         return self.get_analysis(aid, user_id)
 
     def image_path(self, analysis_id: int, kind: str) -> Path:
@@ -352,9 +459,14 @@ class Store:
         return rows[0]["access_key"] if rows else None
 
     _ANALYSIS_SELECT = """
-        SELECT a.*, p.name AS project_name FROM analyses a
+        SELECT a.*, p.name AS project_name, u.name AS author_name,
+               (SELECT COUNT(*) FROM project_members m WHERE m.project_id = a.project_id) AS project_members
+        FROM analyses a
         LEFT JOIN projects p ON p.id = a.project_id
+        LEFT JOIN users u ON u.id = a.user_id
     """
+    # Visible para el usuario: suyo o de un proyecto al que entra (3 parámetros: user_id × 3).
+    _VISIBLE = f"(a.user_id = ? OR a.project_id IN {_MY_PROJECTS})"
 
     @staticmethod
     def _decode(row: dict, with_colonies: bool) -> dict:
@@ -365,6 +477,16 @@ class Store:
         row["correction"] = result.get("correction")
         row["annotated_version"] = result.get("annotated_version", 0)
         row["quality"] = result.get("quality")
+        row["incubation"] = result.get("incubation")
+        # Revisión: solo tiene sentido en proyectos compartidos (sin miembros, nadie más revisa).
+        estado = row.pop("review_status", "")
+        row.pop("reviewed_by", None)
+        quien, cuando, nota = row.pop("reviewer_name", ""), row.pop("reviewed_at", None), row.pop("review_note", "")
+        if estado:
+            row["review"] = {"status": estado, "by": quien, "at": cuando, "note": nota}
+        else:
+            row["review"] = {"status": "pendiente"} if row.get("project_members") else None
+        row["shared"] = bool(row.pop("project_members", 0))
         if with_colonies:
             row["colonies"] = result["colonies"]
             # Detecciones del modelo que el usuario quitó a mano (para mostrarlas y poder restaurarlas).
@@ -373,23 +495,41 @@ class Store:
         return row
 
     def get_analysis(self, analysis_id: int, user_id: int, with_colonies: bool = True) -> dict | None:
-        rows = self._all(self._ANALYSIS_SELECT + " WHERE a.id = ? AND a.user_id = ?", (analysis_id, user_id))
+        """Análisis propio o de un proyecto compartido con el usuario."""
+        rows = self._all(self._ANALYSIS_SELECT + f" WHERE a.id = ? AND {self._VISIBLE}",
+                         (analysis_id, user_id, user_id, user_id))
         return self._decode(rows[0], with_colonies) if rows else None
 
     def result_of(self, analysis_id: int, user_id: int) -> dict | None:
         """Resultado completo guardado (incluye las detecciones originales si hubo corrección)."""
-        rows = self._all("SELECT result_json FROM analyses WHERE id = ? AND user_id = ?", (analysis_id, user_id))
+        rows = self._all(f"SELECT result_json FROM analyses a WHERE a.id = ? AND {self._VISIBLE}",
+                         (analysis_id, user_id, user_id, user_id))
         return json.loads(rows[0]["result_json"]) if rows else None
 
     def save_result(self, analysis_id: int, user_id: int, result: dict, annotated: np.ndarray) -> dict | None:
-        """Guarda un resultado recalculado (corrección manual) y su nueva imagen anotada."""
+        """Guarda un resultado recalculado (corrección manual) y su nueva imagen anotada.
+
+        Quien llama comprueba antes que el usuario puede corregir. Si cambia el conteo, una aprobación
+        anterior deja de valer: el análisis vuelve a quedar pendiente de revisión."""
         s = result["summary"]
-        self._exec("""UPDATE analyses SET total = ?, cfu_per_ml = ?, status = ?, result_json = ?
-                      WHERE id = ? AND user_id = ?""",
-                   (s["total"], s["cfu_per_ml"], s["status"], json.dumps(result, ensure_ascii=False),
-                    analysis_id, user_id))
+        self._exec("""UPDATE analyses SET total = ?, cfu_per_ml = ?, status = ?, result_json = ?,
+                          review_status = '', reviewed_by = NULL, reviewer_name = '', reviewed_at = NULL,
+                          review_note = ''
+                      WHERE id = ?""",
+                   (s["total"], s["cfu_per_ml"], s["status"], json.dumps(result, ensure_ascii=False), analysis_id))
         cv2.imwrite(str(self.image_path(analysis_id, "annotated")), annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
         return self.get_analysis(analysis_id, user_id)
+
+    def set_review(self, analysis_id: int, reviewer: dict | None, status: str, note: str = "") -> None:
+        """Aprueba o devuelve un análisis (status '' borra la revisión)."""
+        if status and status not in REVIEW_STATES:
+            raise ValueError(status)
+        if not status:
+            reviewer, note = None, ""
+        self._exec("""UPDATE analyses SET review_status = ?, reviewed_by = ?, reviewer_name = ?, reviewed_at = ?,
+                          review_note = ? WHERE id = ?""",
+                   (status, reviewer["id"] if reviewer else None, reviewer["name"] if reviewer else "",
+                    _now() if status else None, note, analysis_id))
 
     def get_analysis_by_key(self, analysis_id: int, key: str) -> dict | None:
         expected = self.access_key(analysis_id)
@@ -399,8 +539,22 @@ class Store:
         return self._decode(rows[0], True) if rows else None
 
     def list_analyses(self, user_id: int, project_id: int | None = None, query: str = "",
-                      limit: int = 50, offset: int = 0) -> list[dict]:
-        where, params = ["a.user_id = ?"], [user_id]
+                      limit: int = 50, offset: int = 0, mine_only: bool = False,
+                      to_review: bool = False) -> list[dict]:
+        """Análisis visibles (propios y de proyectos compartidos), o solo los propios con `mine_only`.
+
+        `to_review`: los de otros miembros, sin revisar, en proyectos compartidos donde el usuario es dueño o
+        revisor."""
+        if mine_only:
+            where, params = ["a.user_id = ?"], [user_id]
+        else:
+            where, params = [self._VISIBLE], [user_id, user_id, user_id]
+        if to_review:
+            where.append("""a.review_status = '' AND a.user_id != ? AND a.project_id IN (
+                SELECT id FROM projects WHERE user_id = ?
+                    AND EXISTS (SELECT 1 FROM project_members m WHERE m.project_id = projects.id)
+                UNION SELECT project_id FROM project_members WHERE user_id = ? AND role = 'revisor')""")
+            params += [user_id, user_id, user_id]
         if project_id is not None:
             where.append("a.project_id = ?")
             params.append(project_id)
@@ -435,8 +589,10 @@ class Store:
         return ok
 
     def sample_plates(self, user_id: int, project_id: int | None = None, group: str | None = None) -> list[dict]:
-        """Placas que pertenecen a alguna muestra (sample_group no vacío), para agruparlas y combinarlas."""
-        where, params = ["a.user_id = ?", "a.sample_group != ''"], [user_id]
+        """Placas que pertenecen a alguna muestra (sample_group no vacío), para agruparlas y combinarlas.
+
+        En un proyecto compartido entran las placas de todos sus miembros."""
+        where, params = [self._VISIBLE, "a.sample_group != ''"], [user_id, user_id, user_id]
         if project_id is not None:
             where.append("a.project_id = ?")
             params.append(project_id)
@@ -451,18 +607,65 @@ class Store:
 
     def groups(self, user_id: int, project_id: int | None = None) -> list[str]:
         """Nombres de muestra ya usados (para sugerirlos al crear un análisis)."""
-        sql = "SELECT DISTINCT sample_group FROM analyses WHERE user_id = ? AND sample_group != ''"
-        params: tuple = (user_id,)
+        sql = f"SELECT DISTINCT sample_group FROM analyses a WHERE {self._VISIBLE} AND sample_group != ''"
+        params: tuple = (user_id, user_id, user_id)
         if project_id is not None:
             sql += " AND project_id = ?"
             params += (project_id,)
         return [r["sample_group"] for r in self._all(sql + " ORDER BY sample_group", params)]
 
+    # ---------------------------------------------------------------- siembras en incubación
+    _INCUBATION_SELECT = """
+        SELECT i.*, p.name AS project_name, u.name AS created_by,
+               (SELECT COUNT(*) FROM analyses x WHERE x.incubation_id = i.id) AS analyses_count
+        FROM incubations i
+        LEFT JOIN projects p ON p.id = i.project_id
+        LEFT JOIN users u ON u.id = i.user_id
+    """
+    _INC_VISIBLE = f"(i.user_id = ? OR i.project_id IN {_MY_PROJECTS})"
+
+    def create_incubation(self, user_id: int, *, name: str, hours: float, seeded_at: str | None = None,
+                          project_id: int | None = None, sample_group: str = "", plates: int | None = None,
+                          temperature_c: float | None = None, notes: str = "") -> dict:
+        now = _now()
+        cur = self._exec(
+            """INSERT INTO incubations (user_id, project_id, name, sample_group, plates, seeded_at, hours,
+                   temperature_c, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, project_id, name, sample_group.strip(), plates, seeded_at or now, hours, temperature_c,
+             notes, now))
+        return self.get_incubation(cur.lastrowid, user_id)
+
+    def get_incubation(self, incubation_id: int, user_id: int) -> dict | None:
+        rows = self._all(self._INCUBATION_SELECT + f" WHERE i.id = ? AND {self._INC_VISIBLE}",
+                         (incubation_id, user_id, user_id, user_id))
+        return rows[0] if rows else None
+
+    def list_incubations(self, user_id: int, include_done: bool = False) -> list[dict]:
+        """Siembras propias y de proyectos compartidos; sin `include_done`, solo las que faltan por leer."""
+        where = f"{self._INC_VISIBLE}" + ("" if include_done else " AND i.done_at IS NULL")
+        return self._all(self._INCUBATION_SELECT + f" WHERE {where} ORDER BY i.done_at IS NOT NULL, "
+                         "datetime(i.seeded_at, '+' || CAST(i.hours * 60 AS INTEGER) || ' minutes'), i.id",
+                         (user_id, user_id, user_id))
+
+    def update_incubation(self, incubation_id: int, user_id: int, **fields) -> dict | None:
+        allowed = {k: v for k, v in fields.items()
+                   if k in ("name", "hours", "temperature_c", "notes", "plates", "done_at", "seeded_at")
+                   and (v is not None or k in ("done_at", "temperature_c", "plates"))}
+        if allowed:
+            sets = ", ".join(f"{k} = ?" for k in allowed)
+            self._exec(f"UPDATE incubations SET {sets} WHERE id = ?", (*allowed.values(), incubation_id))
+        return self.get_incubation(incubation_id, user_id)
+
+    def delete_incubation(self, incubation_id: int, user_id: int) -> bool:
+        """Solo quien creó la siembra la borra; sus análisis se conservan."""
+        return self._exec("DELETE FROM incubations WHERE id = ? AND user_id = ?",
+                          (incubation_id, user_id)).rowcount > 0
+
     # ---------------------------------------------------------------- resumen
     def stats(self, user_id: int) -> dict:
-        return self._all("""SELECT COUNT(*) AS analyses, COALESCE(SUM(total), 0) AS colonies,
-                                   (SELECT COUNT(*) FROM projects WHERE user_id = ?) AS projects
-                            FROM analyses WHERE user_id = ?""", (user_id, user_id))[0]
+        return self._all(f"""SELECT COUNT(*) AS analyses, COALESCE(SUM(total), 0) AS colonies,
+                                    (SELECT COUNT(*) FROM projects WHERE id IN {_MY_PROJECTS}) AS projects
+                             FROM analyses WHERE user_id = ?""", (user_id, user_id, user_id))[0]
 
     # ---------------------------------------------------------------- datos sin dueño
     def orphans(self) -> dict:
