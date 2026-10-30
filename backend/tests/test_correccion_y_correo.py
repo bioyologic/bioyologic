@@ -163,3 +163,22 @@ def test_accounts_db_from_previous_version(tmp_path):
     nueva = store.create_user(email="nueva@lab.co", password="clave-segura-1", name="N", consent_version="t")
     assert nueva["email_verified"] is False
     store.close()
+
+
+def test_report_with_special_characters_and_accents(ctx):
+    """Nombres con tildes, < > y & y notas con saltos de línea: el PDF se genera y se puede descargar."""
+    client, jpg, _ = ctx
+    a = _upload(client, jpg, notes="Punto 3 <cerca del vertedero> & lluvia.\nRepetir si < 30.",
+                **{"dilution": 0.0001, "volume_ml": 0.1}).json()
+    client.patch(f"/analyses/{a['id']}", json={"sample_name": "Réplica <2> & ñandú · P01"})
+    r = client.get(a["report_url"])
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    disp = r.headers["content-disposition"]
+    assert disp.isascii() and "filename*=UTF-8''" in disp and "%C3%A9" in disp
+
+
+def test_report_helpers():
+    from bioyologic.report import _dilucion, _txt, _verbo
+    assert _txt("a <b> & c\nd") == "a &lt;b&gt; &amp; c<br/>d"
+    assert _dilucion(1e-4) == "1 × 10<super>-4</super>" and _dilucion(0.25) == "0,25"
+    assert _verbo(1, "quitó", "quitaron") == "se quitó 1" and _verbo(2, "quitó", "quitaron") == "se quitaron 2"

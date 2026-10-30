@@ -34,9 +34,11 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from collections import defaultdict, deque
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 import cv2
 import numpy as np
@@ -588,13 +590,20 @@ def analysis_image(analysis_id: int, kind: str, key: str = "", store: Store = De
                         headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
+def _pdf_disposition(sample_name: str) -> str:
+    """Nombre del PDF descargado. Las cabeceras HTTP solo admiten ASCII: un nombre sin tildes para todos los
+    navegadores y el nombre con tildes en `filename*` (RFC 6266) para los que lo entienden."""
+    limpio = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in sample_name)
+    ascii_ = unicodedata.normalize("NFKD", limpio).encode("ascii", "ignore").decode() or "analisis"
+    return f"inline; filename=\"Bioyologic_{ascii_}.pdf\"; filename*=UTF-8''{quote(f'Bioyologic_{limpio}.pdf')}"
+
+
 @app.get("/analyses/{analysis_id}/report.pdf")
 def analysis_report(analysis_id: int, key: str = "", store: Store = Depends(get_store)) -> Response:
     a = _require(store.get_analysis_by_key(analysis_id, key), "Análisis")
     pdf = build_report(a, store.image_path(analysis_id, "annotated"))
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in a["sample_name"])
     return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="Bioyologic_{safe}.pdf"'})
+                    headers={"Content-Disposition": _pdf_disposition(a["sample_name"])})
 
 
 # --------------------------------------------------------------------- proyectos
