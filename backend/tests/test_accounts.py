@@ -161,6 +161,7 @@ def test_legacy_database_migrates_without_owner(tmp_path):
     assert store.access_key(1) is None  # sin dueño, ni siquiera sus imágenes son accesibles
     user = store.create_user(email="a@b.co", password="clave-segura-1", name="A", consent_version="t")
     assert store.list_analyses(user["id"]) == []
+    assert user["email_verified"] is False  # cuenta nueva: sin verificar, aunque la base sea migrada
     store.assign_orphans(user["id"])
     assert [a["sample_name"] for a in store.list_analyses(user["id"])] == ["Caja de prueba"]
     assert store.access_key(1)

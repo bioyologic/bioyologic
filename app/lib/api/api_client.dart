@@ -15,7 +15,7 @@ class ApiException implements Exception {
 
 /// Cliente HTTP de la API de Bioyologic.
 class ApiClient {
-  ApiClient(String baseUrl, {http.Client? client, this.token, this.onUnauthorized})
+  ApiClient(String baseUrl, {http.Client? client, this.token, this.onUnauthorized, this.onUnverified})
       : baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), ''),
         _client = client ?? http.Client();
 
@@ -27,6 +27,9 @@ class ApiClient {
 
   /// Se llama cuando el servidor rechaza la sesión (caducada o cerrada en otro dispositivo).
   void Function()? onUnauthorized;
+
+  /// Se llama cuando el servidor exige verificar el correo antes de seguir.
+  void Function()? onUnverified;
 
   Map<String, String> get _auth => {if (token != null) 'Authorization': 'Bearer $token'};
 
@@ -44,6 +47,7 @@ class ApiClient {
       throw ApiException('No se pudo conectar con el servidor ($baseUrl).');
     }
     if (r.statusCode == 401 && token != null) onUnauthorized?.call();
+    if (r.statusCode == 403 && r.headers['x-bioyologic-reason'] == 'email-not-verified') onUnverified?.call();
     if (r.statusCode == 204) return null;
     final body = r.bodyBytes.isEmpty ? null : jsonDecode(utf8.decode(r.bodyBytes));
     if (r.statusCode >= 400) {
@@ -118,6 +122,20 @@ class ApiClient {
   Future<void> changePassword(String current, String next) =>
       _send('POST', '/auth/me/password', {'current_password': current, 'new_password': next});
 
+  /// Confirma el correo con el código de 6 dígitos que llegó al registrarse.
+  Future<UserProfile> verifyEmail(String code) async =>
+      UserProfile.fromJson(await _send('POST', '/auth/verify', {'code': code}) as Map<String, dynamic>);
+
+  Future<void> resendVerification() => _send('POST', '/auth/verify/resend');
+
+  /// Envía al correo un código para cambiar la contraseña (responde igual exista o no la cuenta).
+  Future<void> forgotPassword(String email) => _send('POST', '/auth/password/forgot', {'email': email});
+
+  /// Cambia la contraseña con el código del correo e inicia sesión.
+  Future<({String token, UserProfile user})> resetPassword(String email, String code, String newPassword) async =>
+      _session(await _send('POST', '/auth/password/reset',
+          {'email': email, 'code': code, 'new_password': newPassword}));
+
   /// Borra la cuenta y todos sus datos del servidor (derecho de supresión).
   Future<void> deleteAccount(String password) => _send('DELETE', '/auth/me', {'password': password});
 
@@ -174,6 +192,15 @@ class ApiClient {
       }) as Map<String, dynamic>);
 
   Future<void> deleteAnalysis(int id) => _send('DELETE', '/analyses/$id');
+
+  /// Corrección manual del conteo: ids detectados que se quitan y colonias agregadas (píxeles de la foto).
+  /// Listas vacías deshacen la corrección.
+  Future<Analysis> correctColonies(int id, {required List<int> removed,
+      required List<({double x, double y, double r})> added}) async =>
+      Analysis.fromJson(await _send('PUT', '/analyses/$id/colonies', {
+        'removed': removed,
+        'added': [for (final a in added) {'x': a.x, 'y': a.y, 'r': a.r}],
+      }) as Map<String, dynamic>);
 
   // ----------------------------------------------------------------- proyectos
   Future<List<Project>> projects() async => (await _get('/projects') as List)

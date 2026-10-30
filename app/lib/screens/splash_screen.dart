@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'account_screens.dart';
 import 'shell.dart';
 import 'start_screen.dart';
 
@@ -26,7 +27,11 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       final state = AppScope.read(context);
       // Actualiza nombre e institución en segundo plano; si la sesión ya no vale, la app vuelve al login.
       if (state.isLoggedIn) state.refreshProfile().catchError((_) {});
-      final next = state.isLoggedIn ? const Shell() : const StartScreen();
+      final Widget next = !state.isLoggedIn
+          ? const StartScreen()
+          : state.needsVerification
+              ? const VerifyEmailScreen()
+              : const Shell();
       Navigator.of(context).pushReplacement(PageRouteBuilder(
         pageBuilder: (_, _, _) => next,
         transitionsBuilder: (_, a, _, child) => FadeTransition(opacity: a, child: child),

@@ -45,7 +45,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  ApiClient get api => _api ??= ApiClient(serverUrl, token: _token, onUnauthorized: _sessionExpired);
+  ApiClient get api =>
+      _api ??= ApiClient(serverUrl, token: _token, onUnauthorized: _sessionExpired, onUnverified: _unverified);
 
   // ----------------------------------------------------------------- sesión
   String? get _token => _prefs.getString('auth_token');
@@ -55,6 +56,18 @@ class AppState extends ChangeNotifier {
 
   /// Se activa cuando el servidor rechaza la sesión; la app vuelve a la pantalla de inicio de sesión.
   final sessionExpired = ValueNotifier<int>(0);
+
+  /// La cuenta debe confirmar su correo antes de usar la app.
+  bool get needsVerification => _prefs.getBool('needs_verification') ?? false;
+
+  /// Se activa cuando el servidor pide verificar el correo; la app abre la pantalla del código.
+  final verificationNeeded = ValueNotifier<int>(0);
+
+  void _unverified() {
+    if (needsVerification) return; // varias peticiones rechazadas a la vez: una sola pantalla
+    _prefs.setBool('needs_verification', true);
+    verificationNeeded.value++;
+  }
 
   /// Correo con el que se entró por última vez en este dispositivo: si existe, la app propone
   /// iniciar sesión en vez de registrarse. Se conserva al cerrar sesión.
@@ -83,8 +96,14 @@ class AppState extends ChangeNotifier {
     await _prefs.setString('user_email', u.email);
     await _prefs.setString('user_role', u.role);
     await _prefs.setString('user_institution', u.institution);
+    await _prefs.setBool('needs_verification', u.needsVerification);
     notifyListeners();
   }
+
+  Future<void> verifyEmail(String code) async => _cacheProfile(await api.verifyEmail(code.trim()));
+
+  Future<void> resetPassword(String email, String code, String newPassword) async =>
+      _startSession(await api.resetPassword(email.trim(), code.trim(), newPassword));
 
   Future<void> _startSession(({String token, UserProfile user}) s) async {
     await _prefs.setString('auth_token', s.token);
@@ -136,7 +155,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _clearSession() async {
-    for (final k in ['auth_token', 'user_name', 'user_email', 'user_role', 'user_institution']) {
+    for (final k in ['auth_token', 'user_name', 'user_email', 'user_role', 'user_institution', 'needs_verification']) {
       await _prefs.remove(k);
     }
     _api?.token = null;

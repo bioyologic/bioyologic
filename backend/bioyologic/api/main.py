@@ -17,6 +17,8 @@ Variables de entorno:
     BIOYOLOGIC_CORS_ORIGINS   orígenes permitidos separados por comas (por defecto *)
     BIOYOLOGIC_SOURCE_URL     URL del código fuente (AGPL-3.0, sección 13)
     BIOYOLOGIC_CONTACT_EMAIL  correo del responsable del tratamiento de datos (Ley 1581 de 2012)
+    BIOYOLOGIC_SMTP_*         envío de correos (ver bioyologic/mailer.py). Con SMTP configurado, las cuentas
+                              nuevas deben verificar su correo y se puede recuperar la contraseña.
 
 Cuentas: cada usuario solo ve sus proyectos y análisis. La app envía `Authorization: Bearer <token>`;
 las imágenes y el PDF de un análisis se piden con la clave secreta `?key=` que viene en sus URLs.
@@ -38,15 +40,15 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .. import __version__
-from ..analysis.pipeline import analyze
+from .. import __version__, mailer
+from ..analysis.pipeline import analyze, recount
 from ..detection.detector import ColonyDetector, Detection
 from ..detection.onnx_backend import onnx_available
 from ..detection.species import SpeciesClassifier
@@ -72,7 +74,7 @@ app = FastAPI(title="Bioyologic API", version=__version__,
               description="Conteo y caracterización de colonias bacterianas en placas de Petri. "
                           f"Software libre ({LICENSE}).",
               license_info={"name": LICENSE, "url": "https://www.gnu.org/licenses/agpl-3.0.html"})
-app.add_middleware(CORSMiddleware, allow_methods=["*"], allow_headers=["*"],
+app.add_middleware(CORSMiddleware, allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Bioyologic-Reason"],
                    allow_origins=os.environ.get("BIOYOLOGIC_CORS_ORIGINS", "*").split(","))
 
 
@@ -142,7 +144,10 @@ def _with_urls(a: dict) -> dict:
     """URLs de imágenes y PDF con la clave secreta del análisis (no se pueden adivinar)."""
     aid, key = a["id"], a.pop("access_key")
     a.pop("user_id", None)
+    version = a.pop("annotated_version", 0)
     a["image_urls"] = {k: f"/analyses/{aid}/image/{k}?key={key}" for k in IMAGE_KINDS}
+    if version:
+        a["image_urls"]["annotated"] += f"&v={version}"
     a["report_url"] = f"/analyses/{aid}/report.pdf?key={key}"
     return a
 
@@ -192,6 +197,18 @@ def current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     if user is None:
         raise HTTPException(401, "Inicia sesión para continuar", headers={"WWW-Authenticate": "Bearer"})
     return user
+
+
+def verified_user(user: dict = Depends(current_user)) -> dict:
+    """Cuenta con el correo verificado (solo se exige si el servidor puede enviar correos)."""
+    if mailer.configured() and not user["email_verified"]:
+        raise HTTPException(403, "Verifica tu correo para continuar",
+                            headers={"X-Bioyologic-Reason": "email-not-verified"})
+    return user
+
+
+def _user_out(user: dict) -> dict:
+    return user | {"verification_required": mailer.configured()}
 
 
 def _require(obj, what: str):
@@ -245,7 +262,7 @@ def model_info(detector: ColonyDetector = Depends(get_detector),
 
 
 @app.get("/stats")
-def stats(store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+def stats(store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
     return store.stats(user["id"])
 
 
@@ -282,12 +299,37 @@ class DeleteAccount(BaseModel):
     password: str = Field(..., max_length=128)
 
 
+class CodeIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=12)
+
+
+class ForgotIn(BaseModel):
+    email: str = Field(..., max_length=254)
+
+
+class ResetIn(BaseModel):
+    email: str = Field(..., max_length=254)
+    code: str = Field(..., min_length=4, max_length=12)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+VERIFY_MINUTES = 30
+RESET_MINUTES = 15
+
+
 def _session(store: Store, user: dict) -> dict:
-    return {"token": store.create_session(user["id"]), "user": user}
+    return {"token": store.create_session(user["id"]), "user": _user_out(user)}
+
+
+def _send_code(tasks: BackgroundTasks, store: Store, user: dict, purpose: str, minutes: int) -> None:
+    code = store.new_code(user["id"], purpose, minutes)
+    subject, text = mailer.code_email(code, purpose, minutes)
+    tasks.add_task(mailer.send, user["email"], subject, text)  # sin hacer esperar a la app
 
 
 @app.post("/auth/register", status_code=201)
-def register(body: RegisterIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
+def register(body: RegisterIn, tasks: BackgroundTasks, store: Store = Depends(get_store),
+             _: None = Depends(login_limit)) -> dict:
     email = body.email.strip().lower()
     if not EMAIL_RE.match(email):
         raise HTTPException(422, "Correo electrónico no válido")
@@ -298,6 +340,8 @@ def register(body: RegisterIn, store: Store = Depends(get_store), _: None = Depe
                              consent_version=PRIVACY_VERSION)
     if user is None:
         raise HTTPException(409, "Ya existe una cuenta con ese correo")
+    if mailer.configured():
+        _send_code(tasks, store, user, "verify", VERIFY_MINUTES)
     return _session(store, user)
 
 
@@ -319,13 +363,58 @@ def logout(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 
 @app.get("/auth/me")
 def me(user: dict = Depends(current_user)) -> dict:
-    return user
+    return _user_out(user)
 
 
 @app.patch("/auth/me")
 def update_me(body: ProfilePatch, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
     fields = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-    return store.update_user(user["id"], **fields)
+    return _user_out(store.update_user(user["id"], **fields))
+
+
+@app.post("/auth/verify")
+def verify_email(body: CodeIn, store: Store = Depends(get_store), user: dict = Depends(current_user),
+                 _: None = Depends(login_limit)) -> dict:
+    """Confirma el correo con el código de 6 dígitos que se envió al registrarse."""
+    if not user["email_verified"]:
+        if not store.check_code(user["id"], "verify", body.code):
+            raise HTTPException(400, "Código incorrecto o vencido. Pide uno nuevo.")
+        store.set_verified(user["id"])
+    return _user_out(store.get_user(user["id"]))
+
+
+@app.post("/auth/verify/resend", status_code=204)
+def resend_verification(tasks: BackgroundTasks, store: Store = Depends(get_store),
+                        user: dict = Depends(current_user), _: None = Depends(login_limit)) -> Response:
+    if not mailer.configured():
+        raise HTTPException(503, "El servidor no tiene configurado el envío de correos")
+    if not user["email_verified"]:
+        _send_code(tasks, store, user, "verify", VERIFY_MINUTES)
+    return Response(status_code=204)
+
+
+@app.post("/auth/password/forgot", status_code=204)
+def forgot_password(body: ForgotIn, tasks: BackgroundTasks, store: Store = Depends(get_store),
+                    _: None = Depends(login_limit)) -> Response:
+    """Envía un código para cambiar la contraseña. Responde igual exista o no la cuenta."""
+    if not mailer.configured():
+        contacto = f" Escribe a {CONTACT_EMAIL}." if CONTACT_EMAIL else ""
+        raise HTTPException(503, "La recuperación por correo no está disponible en este servidor." + contacto)
+    user = store.user_by_email(body.email.strip().lower())
+    if user is not None:
+        _send_code(tasks, store, user, "reset", RESET_MINUTES)
+    return Response(status_code=204)
+
+
+@app.post("/auth/password/reset")
+def reset_password(body: ResetIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
+    """Cambia la contraseña con el código del correo; cierra las demás sesiones y entra de nuevo."""
+    user = store.user_by_email(body.email.strip().lower())
+    if user is None or not store.check_code(user["id"], "reset", body.code):
+        raise HTTPException(400, "Código incorrecto o vencido. Pide uno nuevo.")
+    store.set_password(user["id"], body.new_password)
+    store.set_verified(user["id"])  # quien recibió el código controla el correo
+    return _session(store, store.get_user(user["id"]))
 
 
 @app.post("/auth/me/password", status_code=204)
@@ -391,7 +480,7 @@ async def create_analysis(
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
     species_clf: SpeciesClassifier | None = Depends(get_species),
-    user: dict = Depends(current_user),
+    user: dict = Depends(verified_user),
     _: None = Depends(rate_limit),
 ) -> dict:
     if dilution is not None and dilution <= 0:
@@ -419,12 +508,12 @@ async def create_analysis(
 
 @app.get("/analyses")
 def list_analyses(project_id: int | None = None, q: str = "", limit: int = 50, offset: int = 0,
-                  store: Store = Depends(get_store), user: dict = Depends(current_user)) -> list[dict]:
+                  store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> list[dict]:
     return [_with_urls(a) for a in store.list_analyses(user["id"], project_id, q, min(limit, 200), offset)]
 
 
 @app.get("/analyses/{analysis_id}")
-def get_analysis(analysis_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+def get_analysis(analysis_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
     return _with_urls(_require(store.get_analysis(analysis_id, user["id"]), "Análisis"))
 
 
@@ -436,7 +525,7 @@ class AnalysisPatch(BaseModel):
 
 @app.patch("/analyses/{analysis_id}")
 def update_analysis(analysis_id: int, body: AnalysisPatch, store: Store = Depends(get_store),
-                    user: dict = Depends(current_user)) -> dict:
+                    user: dict = Depends(verified_user)) -> dict:
     _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
     fields = body.model_dump(exclude_unset=True)
     if fields.get("project_id"):
@@ -444,9 +533,44 @@ def update_analysis(analysis_id: int, body: AnalysisPatch, store: Store = Depend
     return _with_urls(store.update_analysis(analysis_id, user["id"], **fields))
 
 
+class Added(BaseModel):
+    x: float = Field(..., ge=0)
+    y: float = Field(..., ge=0)
+    r: float = Field(..., gt=1)
+
+
+class Correction(BaseModel):
+    removed: list[int] = Field(default_factory=list, max_length=5000)
+    added: list[Added] = Field(default_factory=list, max_length=2000)
+
+
+@app.put("/analyses/{analysis_id}/colonies")
+def correct_colonies(analysis_id: int, body: Correction, store: Store = Depends(get_store),
+                     user: dict = Depends(verified_user)) -> dict:
+    """Corrección manual del conteo: quitar detecciones del modelo y agregar colonias que no vio.
+
+    Se aplica siempre sobre las detecciones originales (listas vacías = deshacer la corrección), recalcula
+    el conteo, las UFC/mL y la imagen anotada, y queda registrada en el análisis y en el reporte.
+    """
+    a = _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
+    result = store.result_of(analysis_id, user["id"])
+    image = cv2.imread(str(store.image_path(analysis_id, "original")), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(409, "No se encontró la foto original de este análisis")
+    h, w = image.shape[:2]
+    if any(c.x > w or c.y > h or c.r > min(w, h) / 4 for c in body.added):
+        raise HTTPException(422, "Hay colonias agregadas fuera de la foto o demasiado grandes")
+    detected_ids = {c["id"] for c in (result.get("detected_colonies") or result["colonies"]) if not c.get("manual")}
+    if set(body.removed) - detected_ids:
+        raise HTTPException(422, "Hay colonias para quitar que no existen en este análisis")
+    new, annotated = recount(image, result, set(body.removed), [(c.x, c.y, c.r) for c in body.added],
+                             a["dilution"], a["volume_ml"], by=user["email"])
+    return _with_urls(store.save_result(analysis_id, user["id"], new, annotated))
+
+
 @app.delete("/analyses/{analysis_id}", status_code=204)
 def delete_analysis(analysis_id: int, store: Store = Depends(get_store),
-                    user: dict = Depends(current_user)) -> Response:
+                    user: dict = Depends(verified_user)) -> Response:
     _require(store.delete_analysis(analysis_id, user["id"]) or None, "Análisis")
     return Response(status_code=204)
 
@@ -487,29 +611,29 @@ class ProjectPatch(BaseModel):
 
 
 @app.get("/projects")
-def list_projects(store: Store = Depends(get_store), user: dict = Depends(current_user)) -> list[dict]:
+def list_projects(store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> list[dict]:
     return [_project_out(p) for p in store.list_projects(user["id"])]
 
 
 @app.post("/projects", status_code=201)
-def create_project(body: ProjectIn, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+def create_project(body: ProjectIn, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
     return _project_out(store.create_project(user["id"], body.name.strip(), body.description, body.target_samples))
 
 
 @app.get("/projects/{project_id}")
-def get_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+def get_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
     return _project_out(_require(store.get_project(project_id, user["id"]), "Proyecto"))
 
 
 @app.patch("/projects/{project_id}")
 def update_project(project_id: int, body: ProjectPatch, store: Store = Depends(get_store),
-                   user: dict = Depends(current_user)) -> dict:
+                   user: dict = Depends(verified_user)) -> dict:
     _require(store.get_project(project_id, user["id"]), "Proyecto")
     return _project_out(store.update_project(project_id, user["id"], **body.model_dump(exclude_unset=True)))
 
 
 @app.delete("/projects/{project_id}", status_code=204)
-def delete_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> Response:
+def delete_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> Response:
     _require(store.delete_project(project_id, user["id"]) or None, "Proyecto")
     return Response(status_code=204)
 

@@ -18,6 +18,11 @@ class Analysis {
         colonies = (j['colonies'] as List?)
             ?.map((c) => Colony.fromJson(c as Map<String, dynamic>))
             .toList(),
+        removedColonies = ((j['removed_colonies'] as List?) ?? [])
+            .map((c) => Colony.fromJson(c as Map<String, dynamic>))
+            .toList(),
+        imageSize = (j['image_size'] as List?)?.map((v) => (v as num).toDouble()).toList(),
+        correction = j['correction'] == null ? null : Correction.fromJson(j['correction'] as Map<String, dynamic>),
         imageUrls = Map<String, String>.from(j['image_urls'] as Map),
         reportUrl = j['report_url'] as String,
         species = j['species'] == null ? null : SpeciesPrediction.fromJson(j['species'] as Map<String, dynamic>);
@@ -35,6 +40,15 @@ class Analysis {
 
   /// Solo viene en el detalle (GET /analyses/{id}), no en los listados.
   final List<Colony>? colonies;
+
+  /// Detecciones del modelo que el usuario quitó a mano (solo en el detalle).
+  final List<Colony> removedColonies;
+
+  /// Ancho y alto de la foto original en píxeles.
+  final List<double>? imageSize;
+
+  /// Corrección manual del conteo, si la hubo.
+  final Correction? correction;
   final Map<String, String> imageUrls;
   final String reportUrl;
 
@@ -91,13 +105,26 @@ class Colony {
   Colony.fromJson(Map<String, dynamic> j)
       : id = j['id'] as int,
         className = j['class_name'] as String,
-        confidence = _d(j['confidence'])!,
+        confidence = _d(j['confidence']),
         speciesConfidence = _d(j['species_confidence']),
+        manual = (j['manual'] as bool?) ?? false,
+        center = ((j['center'] as List?) ?? [0, 0]).map((v) => (v as num).toDouble()).toList(),
+        bbox = ((j['bbox'] as List?) ?? [0, 0, 0, 0]).map((v) => (v as num).toDouble()).toList(),
         m = j['morphology'] as Map<String, dynamic>;
 
   final int id;
   final String className;
-  final double confidence;
+
+  /// Confianza del detector; null en las colonias agregadas a mano.
+  final double? confidence;
+
+  /// Agregada a mano por el usuario (no la detectó el modelo).
+  final bool manual;
+
+  /// Centro (x, y) y caja (x1, y1, x2, y2) en píxeles de la foto original.
+  final List<double> center;
+  final List<double> bbox;
+  double get radius => ((bbox[2] - bbox[0]) + (bbox[3] - bbox[1])) / 4;
   final double? speciesConfidence;
   final Map<String, dynamic> m;
 
@@ -199,11 +226,37 @@ class UserProfile {
         email = j['email'] as String,
         name = j['name'] as String,
         role = (j['role'] as String?) ?? '',
-        institution = (j['institution'] as String?) ?? '';
+        institution = (j['institution'] as String?) ?? '',
+        emailVerified = (j['email_verified'] as bool?) ?? true,
+        verificationRequired = (j['verification_required'] as bool?) ?? false;
 
   final int id;
   final String email;
   final String name;
   final String role;
   final String institution;
+  final bool emailVerified;
+
+  /// El servidor exige verificar el correo (tiene configurado el envío de correos).
+  final bool verificationRequired;
+
+  bool get needsVerification => verificationRequired && !emailVerified;
+}
+
+/// Corrección manual del conteo (queda registrada para la trazabilidad).
+class Correction {
+  Correction.fromJson(Map<String, dynamic> j)
+      : at = DateTime.parse(j['at'] as String).toLocal(),
+        by = (j['by'] as String?) ?? '',
+        detectedTotal = j['detected_total'] as int,
+        removed = List<int>.from(j['removed'] as List),
+        added = (j['added'] as List)
+            .map((a) => (x: _d((a as Map)['x'])!, y: _d(a['y'])!, r: _d(a['r'])!))
+            .toList();
+
+  final DateTime at;
+  final String by;
+  final int detectedTotal;
+  final List<int> removed;
+  final List<({double x, double y, double r})> added;
 }

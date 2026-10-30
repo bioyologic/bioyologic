@@ -88,6 +88,12 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
         ["Borde predominante", (pred.get("margin") or "-").capitalize()],
         ["Color predominante", (pred.get("color") or "-").capitalize()],
     ]
+    corr = analysis.get("correction")
+    if corr:
+        rows.insert(1, ["Corrección manual", Paragraph(
+            f"El modelo detectó {corr['detected_total']}; se quitaron {len(corr['removed'])} y se agregaron "
+            f"{len(corr['added'])} a mano ({corr.get('by') or 'usuario'}, {corr['at'][:16].replace('T', ' ')}). "
+            "En la imagen: tachadas en rojo las quitadas, en naranja las agregadas.", cell)])
     story += [Paragraph("Resumen", h2), _table(rows, [60 * mm, 110 * mm], header=False)]
 
     sp = analysis.get("species")
@@ -114,7 +120,8 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
         for c in colonies:
             m = c["morphology"]
             d = m.get("diameter_mm") if unit == "mm" else m.get("diameter_px")
-            rows.append([str(c["id"]), c["class_name"], _num(d), _num(m["circularity"]),
+            rows.append([f"+{c['id']}" if c.get("manual") else str(c["id"]),
+                         c["class_name"] + (" (manual)" if c.get("manual") else ""), _num(d), _num(m["circularity"]),
                          _num(m["solidity"]), m["form"], m["margin"], m["color_name"]])
         story += [Paragraph(f"Detalle de colonias ({len(colonies)})", h2),
                   _table(rows, [10 * mm, 30 * mm, 22 * mm, 16 * mm, 18 * mm, 24 * mm, 22 * mm, 22 * mm])]

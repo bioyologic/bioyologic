@@ -10,6 +10,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
+import 'correction_screen.dart';
 
 class ResultScreen extends StatelessWidget {
   const ResultScreen({super.key, required this.analysisId});
@@ -41,6 +42,10 @@ class _ResultView extends StatelessWidget {
   Future<void> _menu(BuildContext context, String action) async {
     final state = AppScope.read(context);
     switch (action) {
+      case 'correct':
+        final saved = await Navigator.of(context)
+            .push<bool>(MaterialPageRoute(builder: (_) => CorrectionScreen(a)));
+        if (saved == true) await reload();
       case 'rename':
         final name = await _prompt(context, 'Renombrar muestra', a.sampleName);
         if (name != null && name.isNotEmpty) {
@@ -112,6 +117,7 @@ class _ResultView extends StatelessWidget {
             PopupMenuButton<String>(
               onSelected: (v) => _menu(context, v),
               itemBuilder: (_) => const [
+                PopupMenuItem(value: 'correct', child: Text('Corregir conteo')),
                 PopupMenuItem(value: 'rename', child: Text('Renombrar')),
                 PopupMenuItem(value: 'move', child: Text('Mover a proyecto')),
                 PopupMenuItem(value: 'delete', child: Text('Eliminar')),
@@ -125,7 +131,7 @@ class _ResultView extends StatelessWidget {
           Expanded(
             child: TabBarView(children: [
               _SummaryTab(a, onDownload: () => _download(context)),
-              _ColoniesTab(a),
+              _ColoniesTab(a, onCorrect: () => _menu(context, 'correct')),
               _MorphologyTab(a),
             ]),
           ),
@@ -167,7 +173,18 @@ class _Header extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(a.sampleName, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
-              StatusChip(a.summary.status),
+              Wrap(spacing: 6, runSpacing: 4, children: [
+                StatusChip(a.summary.status),
+                if (a.correction != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                        color: Bio.warn.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(20)),
+                    child: Text(
+                        'Corregido a mano: −${a.correction!.removed.length} / +${a.correction!.added.length}',
+                        style: const TextStyle(color: Bio.warn, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                  ),
+              ]),
               const SizedBox(height: 4),
               Text('${friendlyDate(a.createdAt)}${a.projectName != null ? ' · ${a.projectName}' : ''}',
                   style: TextStyle(color: muted, fontSize: 12.5)),
@@ -293,7 +310,7 @@ class _PredictionCard extends StatelessWidget {
     final s = a.summary;
     final top = s.predominant['class'] ?? 'colony';
     final share = (s.byClass[top] ?? 0) / math.max(1, s.total);
-    final conf = colonies.where((c) => c.className == top).map((c) => c.confidence).fold(0.0, (x, y) => x + y) /
+    final conf = colonies.where((c) => c.className == top).map((c) => c.confidence ?? 1.0).fold(0.0, (x, y) => x + y) /
         math.max(1, s.byClass[top] ?? 1);
     return Container(
       padding: const EdgeInsets.all(16),
@@ -433,8 +450,9 @@ class _NotesFieldState extends State<_NotesField> {
 
 // ------------------------------------------------------------------ Colonias
 class _ColoniesTab extends StatelessWidget {
-  const _ColoniesTab(this.a);
+  const _ColoniesTab(this.a, {required this.onCorrect});
   final Analysis a;
+  final VoidCallback onCorrect;
 
   @override
   Widget build(BuildContext context) {
@@ -462,6 +480,21 @@ class _ColoniesTab extends StatelessWidget {
             ),
           ]),
         ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: onCorrect,
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(a.correction == null ? 'Corregir conteo (quitar o agregar colonias)' : 'Editar la corrección'),
+        ),
+        if (a.correction != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+                'El modelo detectó ${a.correction!.detectedTotal}; se quitaron ${a.correction!.removed.length} '
+                'y se agregaron ${a.correction!.added.length} a mano. En la imagen: tachadas en rojo las quitadas, '
+                'en naranja las agregadas.',
+                style: TextStyle(color: muted, fontSize: 12.5)),
+          ),
         const SizedBox(height: 8),
         SectionHeader('${colonies.length} colonias'),
         if (colonies.isEmpty)
@@ -516,11 +549,14 @@ class _ColoniesTab extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Colonia #${c.id}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                  Text(c.speciesConfidence == null
-                      ? '${speciesLabel(c.className)} · confianza ${(c.confidence * 100).round()} %'
-                      : '${speciesLabel(c.className)} (${(c.speciesConfidence! * 100).round()} %) · '
-                          'detección ${(c.confidence * 100).round()} %'),
+                  Text(c.manual ? 'Colonia +${c.id} (agregada a mano)' : 'Colonia #${c.id}',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                  Text(c.confidence == null
+                      ? 'Agregada a mano por el usuario'
+                      : c.speciesConfidence == null
+                          ? '${speciesLabel(c.className)} · confianza ${(c.confidence! * 100).round()} %'
+                          : '${speciesLabel(c.className)} (${(c.speciesConfidence! * 100).round()} %) · '
+                              'detección ${(c.confidence! * 100).round()} %'),
                 ]),
               ),
             ]),

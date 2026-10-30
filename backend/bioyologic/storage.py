@@ -32,7 +32,16 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
     consent_at TEXT NOT NULL,
-    consent_version TEXT NOT NULL
+    consent_version TEXT NOT NULL,
+    email_verified INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS codes (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL,          -- verify | reset
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, purpose)
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -68,6 +77,8 @@ CREATE TABLE IF NOT EXISTS analyses (
 
 # Columnas añadidas después de la primera versión: las bases existentes se migran al abrir.
 MIGRATIONS = {
+    # Las cuentas creadas antes de la verificación por correo quedan verificadas (DEFAULT 1).
+    "users": {"email_verified": "INTEGER NOT NULL DEFAULT 1"},
     "projects": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE"},
     "analyses": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE", "access_key": "TEXT"},
 }
@@ -82,7 +93,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 IMAGE_KINDS = ("original", "annotated", "thumb")
 SESSION_DAYS = 30
-USER_FIELDS = "id, email, name, role, institution, created_at, consent_at, consent_version"
+USER_FIELDS = "id, email, name, role, institution, created_at, consent_at, consent_version, email_verified"
+CODE_ATTEMPTS = 5  # intentos por código antes de invalidarlo
 
 
 def _now() -> str:
@@ -131,6 +143,8 @@ class Store:
 
     def _migrate(self) -> None:
         for table, cols in MIGRATIONS.items():
+            if not self._db.execute("SELECT name FROM sqlite_master WHERE name = ?", (table,)).fetchone():
+                continue
             have = {r["name"] for r in self._db.execute(f"PRAGMA table_info({table})")}
             for col, decl in cols.items():
                 if col not in have:
@@ -160,15 +174,54 @@ class Store:
         try:
             cur = self._exec(
                 """INSERT INTO users (email, name, role, institution, password_hash, created_at,
-                       consent_at, consent_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       consent_at, consent_version, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
                 (email, name, role, institution, hash_password(password), now, now, consent_version))
+        # email_verified = 0 explícito: en bases migradas la columna tiene DEFAULT 1 (cuentas anteriores).
         except sqlite3.IntegrityError:
             return None
         return self.get_user(cur.lastrowid)
 
     def get_user(self, user_id: int) -> dict | None:
         rows = self._all(f"SELECT {USER_FIELDS} FROM users WHERE id = ?", (user_id,))
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        rows[0]["email_verified"] = bool(rows[0]["email_verified"])
+        return rows[0]
+
+    def user_by_email(self, email: str) -> dict | None:
+        rows = self._all("SELECT id FROM users WHERE email = ?", (email,))
+        return self.get_user(rows[0]["id"]) if rows else None
+
+    def set_verified(self, user_id: int) -> None:
+        self._exec("UPDATE users SET email_verified = 1 WHERE id = ?", (user_id,))
+
+    # ---------------------------------------------------------------- códigos de un solo uso
+    def new_code(self, user_id: int, purpose: str, minutes: int) -> str:
+        """Código de 6 dígitos (reemplaza al anterior del mismo tipo). Solo se guarda su hash."""
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        expires = (datetime.now().astimezone() + timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        self._exec("""INSERT INTO codes (user_id, purpose, code_hash, expires_at, attempts) VALUES (?, ?, ?, ?, 0)
+                      ON CONFLICT (user_id, purpose) DO UPDATE SET code_hash = excluded.code_hash,
+                      expires_at = excluded.expires_at, attempts = 0""",
+                   (user_id, purpose, _token_hash(f"{purpose}:{user_id}:{code}"), expires))
+        return code
+
+    def check_code(self, user_id: int, purpose: str, code: str) -> bool:
+        """True si el código es correcto y está vigente (y lo consume). Tras 5 fallos deja de servir."""
+        rows = self._all("SELECT code_hash, expires_at, attempts FROM codes WHERE user_id = ? AND purpose = ?",
+                         (user_id, purpose))
+        if not rows:
+            return False
+        r = rows[0]
+        if r["attempts"] >= CODE_ATTEMPTS or datetime.fromisoformat(r["expires_at"]) < datetime.now().astimezone():
+            self._exec("DELETE FROM codes WHERE user_id = ? AND purpose = ?", (user_id, purpose))
+            return False
+        ok = hmac.compare_digest(r["code_hash"], _token_hash(f"{purpose}:{user_id}:{code.strip()}"))
+        if ok:
+            self._exec("DELETE FROM codes WHERE user_id = ? AND purpose = ?", (user_id, purpose))
+        else:
+            self._exec("UPDATE codes SET attempts = attempts + 1 WHERE user_id = ? AND purpose = ?", (user_id, purpose))
+        return ok
 
     def authenticate(self, email: str, password: str) -> dict | None:
         rows = self._all("SELECT id, password_hash FROM users WHERE email = ?", (email,))
@@ -305,13 +358,33 @@ class Store:
         row["summary"] = result["summary"]
         row["image_size"] = result.get("image_size")
         row["species"] = result.get("species")
+        row["correction"] = result.get("correction")
+        row["annotated_version"] = result.get("annotated_version", 0)
         if with_colonies:
             row["colonies"] = result["colonies"]
+            # Detecciones del modelo que el usuario quitó a mano (para mostrarlas y poder restaurarlas).
+            quitadas = set((result.get("correction") or {}).get("removed", []))
+            row["removed_colonies"] = [c for c in result.get("detected_colonies", []) if c["id"] in quitadas]
         return row
 
     def get_analysis(self, analysis_id: int, user_id: int, with_colonies: bool = True) -> dict | None:
         rows = self._all(self._ANALYSIS_SELECT + " WHERE a.id = ? AND a.user_id = ?", (analysis_id, user_id))
         return self._decode(rows[0], with_colonies) if rows else None
+
+    def result_of(self, analysis_id: int, user_id: int) -> dict | None:
+        """Resultado completo guardado (incluye las detecciones originales si hubo corrección)."""
+        rows = self._all("SELECT result_json FROM analyses WHERE id = ? AND user_id = ?", (analysis_id, user_id))
+        return json.loads(rows[0]["result_json"]) if rows else None
+
+    def save_result(self, analysis_id: int, user_id: int, result: dict, annotated: np.ndarray) -> dict | None:
+        """Guarda un resultado recalculado (corrección manual) y su nueva imagen anotada."""
+        s = result["summary"]
+        self._exec("""UPDATE analyses SET total = ?, cfu_per_ml = ?, status = ?, result_json = ?
+                      WHERE id = ? AND user_id = ?""",
+                   (s["total"], s["cfu_per_ml"], s["status"], json.dumps(result, ensure_ascii=False),
+                    analysis_id, user_id))
+        cv2.imwrite(str(self.image_path(analysis_id, "annotated")), annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        return self.get_analysis(analysis_id, user_id)
 
     def get_analysis_by_key(self, analysis_id: int, key: str) -> dict | None:
         expected = self.access_key(analysis_id)

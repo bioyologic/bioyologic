@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'account_screens.dart';
 import 'info_screens.dart';
 import 'shell.dart';
 
@@ -74,7 +75,10 @@ class _AuthScreenState extends State<AuthScreen> {
         await state.login(_email.text.trim(), _password.text);
       }
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const Shell()));
+      // Cuenta nueva (o sin confirmar): primero el código que llegó al correo.
+      Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => state.needsVerification ? const VerifyEmailScreen() : const Shell()),
+          (_) => false);
     } catch (e) {
       if (mounted) showSnack(context, '$e');
     } finally {
@@ -161,6 +165,15 @@ class _AuthScreenState extends State<AuthScreen> {
                       },
                       onFieldSubmitted: _register ? null : (_) => _submit(),
                     ),
+                    if (!_register)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) => ForgotPasswordScreen(email: _email.text.trim()))),
+                          child: const Text('¿Olvidaste tu contraseña?'),
+                        ),
+                      ),
                     if (_register) ...[
                       const SizedBox(height: 14),
                       TextFormField(

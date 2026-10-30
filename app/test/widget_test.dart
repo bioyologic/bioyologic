@@ -145,4 +145,40 @@ void main() {
     expect(seen.last, 'Bearer tok123');
     expect(expired, 1);
   });
+
+  test('ApiClient: corrección manual del conteo y correo sin verificar', () async {
+    var unverified = 0;
+    late Map<String, dynamic> sent;
+    final api = ApiClient('http://srv', token: 't', onUnverified: () => unverified++,
+        client: MockClient((req) async {
+      if (req.method == 'PUT') {
+        sent = jsonDecode(req.body) as Map<String, dynamic>;
+        return _json({
+          ..._analysisJson(),
+          'image_size': [800, 600],
+          'removed_colonies': [
+            {
+              'id': 2, 'class_name': 'S.aureus', 'confidence': 0.5, 'bbox': [10, 10, 30, 30], 'center': [20, 20],
+              'morphology': (_analysisJson()['colonies'] as List).first['morphology'],
+            }
+          ],
+          'correction': {
+            'at': '2026-10-30T10:00:00', 'by': 'ana@lab.co', 'detected_total': 2, 'removed': [2],
+            'added': [{'x': 100.0, 'y': 50.0, 'r': 8.0}],
+          },
+        }, 200);
+      }
+      return http.Response(jsonEncode({'detail': 'Verifica tu correo para continuar'}), 403,
+          headers: {'x-bioyologic-reason': 'email-not-verified', 'content-type': 'application/json'});
+    }));
+    final a = await api.correctColonies(7, removed: [2], added: [(x: 100.0, y: 50.0, r: 8.0)]);
+    expect(sent['removed'], [2]);
+    expect(sent['added'], [{'x': 100.0, 'y': 50.0, 'r': 8.0}]);
+    expect(a.correction!.detectedTotal, 2);
+    expect(a.correction!.added.single.r, 8.0);
+    expect(a.removedColonies.single.radius, 10.0);
+    expect(a.imageSize, [800.0, 600.0]);
+    await expectLater(api.stats(), throwsA(isA<ApiException>()));
+    expect(unverified, 1);
+  });
 }

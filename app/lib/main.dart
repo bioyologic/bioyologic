@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'screens/account_screens.dart';
 import 'screens/auth_screen.dart';
 import 'screens/splash_screen.dart';
 import 'state/app_state.dart';
@@ -16,6 +17,9 @@ Future<void> main() async {
   // Sesión caducada o cerrada desde otro dispositivo: de vuelta a iniciar sesión.
   state.sessionExpired.addListener(() => navigatorKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthScreen(expired: true)), (_) => false));
+  // El servidor pide verificar el correo (p. ej. se activó el envío de correos después de entrar).
+  state.verificationNeeded.addListener(() => navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const VerifyEmailScreen()), (_) => false));
   runApp(AppScope(state: state, child: const BioyologicApp()));
 }
 
