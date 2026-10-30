@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS analyses (
     access_key TEXT,
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
     sample_name TEXT NOT NULL,
+    sample_group TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     dilution REAL,
     volume_ml REAL,
@@ -80,7 +81,9 @@ MIGRATIONS = {
     # Las cuentas creadas antes de la verificación por correo quedan verificadas (DEFAULT 1).
     "users": {"email_verified": "INTEGER NOT NULL DEFAULT 1"},
     "projects": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE"},
-    "analyses": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE", "access_key": "TEXT"},
+    "analyses": {"user_id": "INTEGER REFERENCES users(id) ON DELETE CASCADE", "access_key": "TEXT",
+                 # Placas de una misma muestra (diluciones y réplicas) comparten este nombre.
+                 "sample_group": "TEXT NOT NULL DEFAULT ''"},
 }
 
 INDEXES = """
@@ -321,13 +324,14 @@ class Store:
     def add_analysis(self, *, user_id: int, sample_name: str, result: dict, original: np.ndarray,
                      annotated: np.ndarray, project_id: int | None = None,
                      dilution: float | None = None, volume_ml: float | None = None,
-                     notes: str = "") -> dict:
+                     notes: str = "", sample_group: str = "") -> dict:
         s = result["summary"]
         cur = self._exec(
-            """INSERT INTO analyses (user_id, access_key, project_id, sample_name, created_at, dilution,
-                   volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, secrets.token_urlsafe(16), project_id, sample_name, result.get("analyzed_at", _now()),
+            """INSERT INTO analyses (user_id, access_key, project_id, sample_name, sample_group, created_at,
+                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, secrets.token_urlsafe(16), project_id, sample_name, sample_group.strip(),
+             result.get("analyzed_at", _now()),
              dilution, volume_ml, result.get("mm_per_px"), s["total"], s["cfu_per_ml"], s["status"], notes,
              json.dumps(result, ensure_ascii=False)))
         aid = cur.lastrowid
@@ -360,6 +364,7 @@ class Store:
         row["species"] = result.get("species")
         row["correction"] = result.get("correction")
         row["annotated_version"] = result.get("annotated_version", 0)
+        row["quality"] = result.get("quality")
         if with_colonies:
             row["colonies"] = result["colonies"]
             # Detecciones del modelo que el usuario quitó a mano (para mostrarlas y poder restaurarlas).
@@ -407,7 +412,9 @@ class Store:
         return [self._decode(r, False) for r in self._all(sql, (*params, limit, offset))]
 
     def update_analysis(self, analysis_id: int, user_id: int, **fields) -> dict | None:
-        allowed = {k: v for k, v in fields.items() if k in ("sample_name", "notes", "project_id")}
+        allowed = {k: v for k, v in fields.items() if k in ("sample_name", "notes", "project_id", "sample_group")}
+        if isinstance(allowed.get("sample_group"), str):
+            allowed["sample_group"] = allowed["sample_group"].strip()
         if "project_id" in allowed and allowed["project_id"] == 0:
             allowed["project_id"] = None  # 0 = quitar del proyecto
         allowed = {k: v for k, v in allowed.items() if v is not None or k == "project_id"}
@@ -426,6 +433,30 @@ class Store:
         if ok:
             self._remove_images(analysis_id)
         return ok
+
+    def sample_plates(self, user_id: int, project_id: int | None = None, group: str | None = None) -> list[dict]:
+        """Placas que pertenecen a alguna muestra (sample_group no vacío), para agruparlas y combinarlas."""
+        where, params = ["a.user_id = ?", "a.sample_group != ''"], [user_id]
+        if project_id is not None:
+            where.append("a.project_id = ?")
+            params.append(project_id)
+        if group is not None:
+            where.append("a.sample_group = ?")
+            params.append(group.strip())
+        return self._all(
+            """SELECT a.id, a.sample_name, a.sample_group, a.project_id, p.name AS project_name, a.created_at,
+                      a.dilution, a.volume_ml, a.total, a.status, a.cfu_per_ml, a.access_key
+               FROM analyses a LEFT JOIN projects p ON p.id = a.project_id
+               WHERE """ + " AND ".join(where) + " ORDER BY a.created_at, a.id", tuple(params))
+
+    def groups(self, user_id: int, project_id: int | None = None) -> list[str]:
+        """Nombres de muestra ya usados (para sugerirlos al crear un análisis)."""
+        sql = "SELECT DISTINCT sample_group FROM analyses WHERE user_id = ? AND sample_group != ''"
+        params: tuple = (user_id,)
+        if project_id is not None:
+            sql += " AND project_id = ?"
+            params += (project_id,)
+        return [r["sample_group"] for r in self._all(sql + " ORDER BY sample_group", params)]
 
     # ---------------------------------------------------------------- resumen
     def stats(self, user_id: int) -> dict:

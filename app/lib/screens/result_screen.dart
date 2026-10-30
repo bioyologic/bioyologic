@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'correction_screen.dart';
+import 'samples_screen.dart';
 
 class ResultScreen extends StatelessWidget {
   const ResultScreen({super.key, required this.analysisId});
@@ -46,6 +47,13 @@ class _ResultView extends StatelessWidget {
         final saved = await Navigator.of(context)
             .push<bool>(MaterialPageRoute(builder: (_) => CorrectionScreen(a)));
         if (saved == true) await reload();
+      case 'group':
+        final g = await _prompt(context, 'Muestra (diluciones y réplicas)', a.sampleGroup);
+        if (g != null) {
+          await state.api.updateAnalysis(a.id, sampleGroup: g);
+          state.dataChanged();
+          await reload();
+        }
       case 'rename':
         final name = await _prompt(context, 'Renombrar muestra', a.sampleName);
         if (name != null && name.isNotEmpty) {
@@ -118,6 +126,7 @@ class _ResultView extends StatelessWidget {
               onSelected: (v) => _menu(context, v),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'correct', child: Text('Corregir conteo')),
+                PopupMenuItem(value: 'group', child: Text('Asignar a una muestra')),
                 PopupMenuItem(value: 'rename', child: Text('Renombrar')),
                 PopupMenuItem(value: 'move', child: Text('Mover a proyecto')),
                 PopupMenuItem(value: 'delete', child: Text('Eliminar')),
@@ -212,9 +221,40 @@ class _SummaryTab extends StatelessWidget {
     final swatch = colonies.where((c) => c.colorName == predColor).map((c) => hexColor(c.colorHex)).firstOrNull;
     final species = s.byClass.keys.any((k) => k != 'colony');
 
+    final issues = a.quality?.issues ?? const [];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
+        if (issues.isNotEmpty)
+          Card(
+            color: Bio.warn.withValues(alpha: 0.10),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.photo_camera_outlined, color: Bio.warn, size: 20),
+                  SizedBox(width: 8),
+                  Text('Calidad de la foto', style: TextStyle(fontWeight: FontWeight.w700, color: Bio.warn)),
+                ]),
+                for (final i in issues)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text('• ${i.message}', style: const TextStyle(fontSize: 13, height: 1.35)),
+                  ),
+              ]),
+            ),
+          ),
+        if (a.sampleGroup.isNotEmpty)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.science_outlined, color: Bio.green),
+              title: Text('Muestra: ${a.sampleGroup}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Ver la UFC/mL combinada de todas sus placas'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => SampleScreen(name: a.sampleGroup, projectId: a.projectId))),
+            ),
+          ),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),

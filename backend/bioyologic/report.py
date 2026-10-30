@@ -181,7 +181,15 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
         rows.insert(1, ["Corrección manual", Paragraph(
             f"El modelo detectó {corr['detected_total']}; {' y '.join(cambios) or 'sin cambios'} a mano "
             f"({quien}{_fecha(corr['at'])}). " + _leyenda(len(corr["removed"]), len(corr["added"])), cell)])
+    if analysis.get("sample_group"):
+        rows.insert(0, ["Muestra", Paragraph(f"{_txt(analysis['sample_group'])} (una de sus placas)", cell)])
     story += [*titulo("Resumen"), _table(rows, [0.36, 0.64], header=False)]
+
+    calidad = (analysis.get("quality") or {}).get("issues") or []
+    if calidad:
+        story += [*titulo("Calidad de la foto"),
+                  _table([[Paragraph("• " + _txt(i["message"]), cell)] for i in calidad], [1.0], header=False),
+                  Paragraph("El conteo se hizo igual; estas advertencias indican qué mejorar en la próxima foto.", small)]
 
     sp = analysis.get("species")
     if sp and sp.get("top"):

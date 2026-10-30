@@ -9,6 +9,8 @@ class Analysis {
         projectId = j['project_id'] as int?,
         projectName = j['project_name'] as String?,
         sampleName = j['sample_name'] as String,
+        sampleGroup = (j['sample_group'] as String?) ?? '',
+        quality = j['quality'] == null ? null : PhotoQuality.fromJson(j['quality'] as Map<String, dynamic>),
         createdAt = DateTime.parse(j['created_at'] as String).toLocal(),
         dilution = _d(j['dilution']),
         volumeMl = _d(j['volume_ml']),
@@ -31,6 +33,12 @@ class Analysis {
   final int? projectId;
   final String? projectName;
   final String sampleName;
+
+  /// Muestra a la que pertenece la placa (diluciones y réplicas de una misma muestra); '' si ninguna.
+  final String sampleGroup;
+
+  /// Control de calidad de la foto (null en análisis anteriores a esta función).
+  final PhotoQuality? quality;
   final DateTime createdAt;
   final double? dilution;
   final double? volumeMl;
@@ -259,4 +267,70 @@ class Correction {
   final int detectedTotal;
   final List<int> removed;
   final List<({double x, double y, double r})> added;
+}
+
+/// Advertencias sobre la foto: borrosa, oscura, reflejos, placa descentrada o lejana.
+class PhotoQuality {
+  PhotoQuality.fromJson(Map<String, dynamic> j)
+      : ok = (j['ok'] as bool?) ?? true,
+        issues = ((j['issues'] as List?) ?? [])
+            .map((i) => (code: (i as Map)['code'] as String, message: i['message'] as String))
+            .toList();
+
+  final bool ok;
+  final List<({String code, String message})> issues;
+}
+
+/// Placa dentro de una muestra.
+class SamplePlate {
+  SamplePlate.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        sampleName = j['sample_name'] as String,
+        createdAt = DateTime.parse(j['created_at'] as String).toLocal(),
+        dilution = _d(j['dilution']),
+        volumeMl = _d(j['volume_ml']),
+        total = j['total'] as int,
+        status = j['status'] as String,
+        cfuPerMl = _d(j['cfu_per_ml']),
+        used = j['used'] as bool,
+        thumbUrl = j['thumb_url'] as String;
+
+  final int id;
+  final String sampleName;
+  final DateTime createdAt;
+  final double? dilution;
+  final double? volumeMl;
+  final int total;
+  final String status;
+  final double? cfuPerMl;
+
+  /// Entra en el cálculo combinado (placa contable de las diluciones elegidas).
+  final bool used;
+  final String thumbUrl;
+}
+
+/// Muestra con varias placas y su UFC/mL combinada según ISO 4833-1.
+class Sample {
+  Sample.fromJson(Map<String, dynamic> j)
+      : name = j['name'] as String,
+        projectId = j['project_id'] as int?,
+        projectName = j['project_name'] as String?,
+        lastAt = DateTime.parse(j['last_at'] as String).toLocal(),
+        cfuPerMl = _d((j['result'] as Map)['cfu_per_ml']),
+        estimated = (j['result'] as Map)['estimated'] as bool,
+        rule = (j['result'] as Map)['rule'] as String,
+        warnings = List<String>.from((j['result'] as Map)['warnings'] as List),
+        plates = (j['plates'] as List).map((p) => SamplePlate.fromJson(p as Map<String, dynamic>)).toList();
+
+  final String name;
+  final int? projectId;
+  final String? projectName;
+  final DateTime lastAt;
+  final double? cfuPerMl;
+  final bool estimated;
+  final String rule;
+  final List<String> warnings;
+  final List<SamplePlate> plates;
+
+  int get usedCount => plates.where((p) => p.used).length;
 }

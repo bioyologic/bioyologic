@@ -50,7 +50,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__, mailer
+from ..analysis.counting import combine_plates
 from ..analysis.pipeline import analyze, recount
+from ..analysis.quality import assess
+from ..export import build_csv
 from ..detection.detector import ColonyDetector, Detection
 from ..detection.onnx_backend import onnx_available
 from ..detection.species import SpeciesClassifier
@@ -479,6 +482,7 @@ async def create_analysis(
     plate_fraction: float | None = Form(None, gt=0, le=1.0),
     plate_diameter_mm: float = Form(90.0, gt=0),
     notes: str = Form(""),
+    sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
     species_clf: SpeciesClassifier | None = Depends(get_species),
@@ -502,9 +506,10 @@ async def create_analysis(
     dets, species = classify_species(img, detector.detect(img), species_clf)
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
+    result["quality"] = assess(img)
     saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
                                original=img, annotated=annotated, project_id=project_id,
-                               dilution=dilution, volume_ml=volume_ml, notes=notes)
+                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)
     return _with_urls(saved)
 
 
@@ -521,6 +526,7 @@ def get_analysis(analysis_id: int, store: Store = Depends(get_store), user: dict
 
 class AnalysisPatch(BaseModel):
     sample_name: str | None = Field(None, min_length=1, max_length=120)
+    sample_group: str | None = Field(None, max_length=120, description="'' = quitar de la muestra")
     notes: str | None = None
     project_id: int | None = Field(None, description="0 = quitar del proyecto")
 
@@ -618,6 +624,77 @@ def analysis_report(analysis_id: int, key: str = "", store: Store = Depends(get_
     pdf = build_report(a, store.image_path(analysis_id, "annotated"))
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": _pdf_disposition(a["sample_name"])})
+
+
+# --------------------------------------------------------------------- muestras (varias placas)
+def _samples(store: Store, user_id: int, project_id: int | None = None, group: str | None = None) -> list[dict]:
+    grupos: dict[tuple, list[dict]] = {}
+    for pl in store.sample_plates(user_id, project_id, group):
+        grupos.setdefault((pl["project_id"], pl["sample_group"]), []).append(pl)
+    out = []
+    for (pid, nombre), placas in grupos.items():
+        res = combine_plates(placas)
+        usadas = set(res["used"])
+        out.append({
+            "name": nombre, "project_id": pid, "project_name": placas[0]["project_name"],
+            "last_at": max(pl["created_at"] for pl in placas),
+            "result": res,
+            "plates": [{"id": pl["id"], "sample_name": pl["sample_name"], "created_at": pl["created_at"],
+                        "dilution": pl["dilution"], "volume_ml": pl["volume_ml"], "total": pl["total"],
+                        "status": pl["status"], "cfu_per_ml": pl["cfu_per_ml"], "used": pl["id"] in usadas,
+                        "thumb_url": f"/analyses/{pl['id']}/image/thumb?key={pl['access_key']}"} for pl in placas],
+        })
+    return sorted(out, key=lambda m: m["last_at"], reverse=True)
+
+
+@app.get("/samples")
+def list_samples(project_id: int | None = None, name: str | None = None, store: Store = Depends(get_store),
+                 user: dict = Depends(verified_user)) -> list[dict]:
+    """Muestras con varias placas (diluciones seriadas y réplicas) y su UFC/mL combinada (ISO 4833-1)."""
+    return _samples(store, user["id"], project_id, name)
+
+
+@app.get("/sample-groups")
+def sample_groups(project_id: int | None = None, store: Store = Depends(get_store),
+                  user: dict = Depends(verified_user)) -> list[str]:
+    """Nombres de muestra ya usados, para sugerirlos al crear un análisis."""
+    return store.groups(user["id"], project_id)
+
+
+class ExportIn(BaseModel):
+    project_id: int | None = None
+
+
+# Enlaces de un solo uso (5 min) para descargar el CSV desde el navegador, que no puede enviar el token.
+_csv_links: dict[str, tuple[int, int | None, float]] = {}
+
+
+@app.post("/export-link")
+def csv_export_link(body: ExportIn, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
+    """Enlace para descargar en CSV (Excel) los análisis de un proyecto, o todos si no se indica proyecto."""
+    nombre = "Bioyologic - todos los análisis"
+    if body.project_id is not None:
+        nombre = f"Bioyologic - {_require(store.get_project(body.project_id, user['id']), 'Proyecto')['name']}"
+    now = time.monotonic()
+    for t, (_, _, exp) in list(_csv_links.items()):
+        if exp < now:
+            del _csv_links[t]
+    token = secrets.token_urlsafe(24)
+    _csv_links[token] = (user["id"], body.project_id, now + 300)
+    return {"url": f"/export/{quote(pdf_name(nombre)[:-4] + '.csv')}?token={token}"}
+
+
+@app.get("/export/{filename}")
+def csv_export(filename: str, token: str, store: Store = Depends(get_store)) -> Response:
+    uid, project_id, exp = _csv_links.pop(token, (None, None, 0.0))
+    if uid is None or exp < time.monotonic():
+        raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
+    analyses = store.list_analyses(uid, project_id, limit=1_000_000)
+    muestras = {(m["project_id"], m["name"]): m["result"] for m in _samples(store, uid, project_id)}
+    nombre = filename if filename.lower().endswith(".csv") else "bioyologic.csv"
+    ascii_ = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().replace('"', "") or "bioyologic.csv"
+    return Response(build_csv(analyses, muestras), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename=\"{ascii_}\"; filename*=UTF-8''{quote(nombre)}"})
 
 
 # --------------------------------------------------------------------- proyectos

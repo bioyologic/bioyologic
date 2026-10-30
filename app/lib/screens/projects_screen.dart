@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../api/models.dart';
@@ -6,6 +9,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/analysis_tile.dart';
 import '../widgets/common.dart';
+import 'samples_screen.dart';
 import '../widgets/format.dart';
 import 'capture_screen.dart';
 
@@ -110,16 +114,25 @@ class ProjectDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final api = AppScope.of(context).api;
-    return Loader<(Project, List<Analysis>)>(
+    return Loader<(Project, List<Analysis>, List<Sample>)>(
       pageTitle: 'Proyecto',
-      load: () async => (await api.project(projectId), await api.analyses(projectId: projectId, limit: 200)),
+      load: () async => (
+        await api.project(projectId),
+        await api.analyses(projectId: projectId, limit: 200),
+        await api.samples(projectId: projectId),
+      ),
       builder: (context, data, reload) {
-        final (p, items) = data;
+        final (p, items, samples) = data;
         final cs = Theme.of(context).colorScheme;
         return Scaffold(
           appBar: AppBar(
             title: Text(p.name),
             actions: [
+              IconButton(
+                tooltip: 'Exportar a Excel (CSV)',
+                icon: const Icon(Icons.download_outlined),
+                onPressed: () => exportCsv(context, projectId: p.id),
+              ),
               PopupMenuButton<String>(
                 onSelected: (v) async {
                   if (v == 'edit') {
@@ -168,7 +181,18 @@ class ProjectDetailScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                const SectionHeader('Muestras'),
+                if (samples.isNotEmpty) ...[
+                  const SectionHeader('UFC/mL por muestra'),
+                  if (samples.where((m) => m.cfuPerMl != null).length >= 2)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
+                        child: CfuChart(samples.reversed.where((m) => m.cfuPerMl != null).toList()),
+                      ),
+                    ),
+                  for (final m in samples) Padding(padding: const EdgeInsets.only(bottom: 8), child: SampleCard(m)),
+                ],
+                const SectionHeader('Placas'),
                 if (items.isEmpty)
                   const EmptyState(icon: Icons.science_outlined, title: 'Sin muestras',
                       message: 'Añade la primera placa a este proyecto.')
@@ -278,4 +302,64 @@ Future<void> showProjectEditor(BuildContext context, {Project? project}) async {
       ),
     ),
   );
+}
+
+
+/// Descarga en CSV (Excel) los análisis de un proyecto, o todos si no se indica proyecto.
+Future<void> exportCsv(BuildContext context, {int? projectId}) async {
+  try {
+    final link = await AppScope.read(context).api.csvExportLink(projectId: projectId);
+    await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
+  } catch (e) {
+    if (context.mounted) showSnack(context, '$e');
+  }
+}
+
+/// Barras de UFC/mL por muestra (escala logarítmica: los valores cambian en órdenes de magnitud).
+class CfuChart extends StatelessWidget {
+  const CfuChart(this.samples, {super.key});
+  final List<Sample> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final logs = [for (final m in samples) math.log(m.cfuPerMl!) / math.ln10];
+    final lo = (logs.reduce(math.min) - 0.5).floorToDouble();
+    final hi = (logs.reduce(math.max) + 0.2).ceilToDouble();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('UFC/mL (escala logarítmica)', style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+      const SizedBox(height: 10),
+      SizedBox(
+        height: 150,
+        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          for (var i = 0; i < samples.length; i++)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  Text(scientific(samples[i].cfuPerMl!), maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Container(
+                    height: 110 * ((logs[i] - lo) / (hi - lo)).clamp(0.05, 1.0),
+                    decoration: BoxDecoration(
+                      color: samples[i].estimated ? Bio.warn.withValues(alpha: 0.7) : Bio.green,
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+        ]),
+      ),
+      const SizedBox(height: 6),
+      Row(children: [
+        for (final m in samples)
+          Expanded(
+            child: Text(m.name, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10.5, color: cs.onSurfaceVariant)),
+          ),
+      ]),
+    ]);
+  }
 }

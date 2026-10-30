@@ -167,6 +167,7 @@ class ApiClient {
     double? volumeMl,
     double? plateFraction,
     double plateDiameterMm = 90,
+    String sampleGroup = '',
   }) async {
     final req = http.MultipartRequest('POST', _uri('/analyses'))
       ..headers.addAll(_auth)
@@ -177,6 +178,7 @@ class ApiClient {
         if (dilution != null) 'dilution': '$dilution',
         if (volumeMl != null) 'volume_ml': '$volumeMl',
         if (plateFraction != null) 'plate_fraction': '$plateFraction',
+        if (sampleGroup.trim().isNotEmpty) 'sample_group': sampleGroup.trim(),
       })
       ..files.add(http.MultipartFile.fromBytes('image', image, filename: filename));
     final body = await _json(() => _client.send(req).then(http.Response.fromStream));
@@ -184,9 +186,10 @@ class ApiClient {
   }
 
   /// `projectId: 0` quita el análisis de su proyecto.
-  Future<Analysis> updateAnalysis(int id, {String? sampleName, String? notes, int? projectId}) async =>
+  Future<Analysis> updateAnalysis(int id, {String? sampleName, String? notes, int? projectId, String? sampleGroup}) async =>
       Analysis.fromJson(await _send('PATCH', '/analyses/$id', {
         'sample_name': ?sampleName,
+        'sample_group': ?sampleGroup,
         'notes': ?notes,
         'project_id': ?projectId,
       }) as Map<String, dynamic>);
@@ -201,6 +204,23 @@ class ApiClient {
         'removed': removed,
         'added': [for (final a in added) {'x': a.x, 'y': a.y, 'r': a.r}],
       }) as Map<String, dynamic>);
+
+  // ----------------------------------------------------------------- muestras y exportación
+  /// Muestras con varias placas y su UFC/mL combinada (ISO 4833-1).
+  Future<List<Sample>> samples({int? projectId, String? name}) async => (await _get('/samples', {
+        if (projectId != null) 'project_id': '$projectId',
+        'name': ?name,
+      }) as List)
+          .map((m) => Sample.fromJson(m as Map<String, dynamic>))
+          .toList();
+
+  /// Nombres de muestra ya usados, para sugerirlos.
+  Future<List<String>> sampleGroups({int? projectId}) async =>
+      List<String>.from(await _get('/sample-groups', {if (projectId != null) 'project_id': '$projectId'}) as List);
+
+  /// Enlace de un solo uso (5 min) al CSV para Excel de un proyecto, o de todos los análisis.
+  Future<String> csvExportLink({int? projectId}) async =>
+      url((await _send('POST', '/export-link', {'project_id': projectId}) as Map<String, dynamic>)['url'] as String);
 
   // ----------------------------------------------------------------- proyectos
   Future<List<Project>> projects() async => (await _get('/projects') as List)

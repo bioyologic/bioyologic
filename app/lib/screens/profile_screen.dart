@@ -6,6 +6,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'info_screens.dart';
+import 'projects_screen.dart';
 import 'settings_screen.dart';
 import 'start_screen.dart';
 
@@ -66,6 +67,7 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 16),
             Card(
               child: Column(children: [
+                _Item(Icons.table_view_outlined, 'Exportar mis análisis a Excel', () => exportCsv(context)),
                 _Item(Icons.download_outlined, 'Descargar mis datos', () => _exportData(context)),
                 _Item(Icons.logout, 'Cerrar sesión', () => confirmLogout(context), danger: true),
                 _Item(Icons.delete_forever_outlined, 'Eliminar mi cuenta', () => confirmDeleteAccount(context),

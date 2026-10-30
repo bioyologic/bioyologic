@@ -181,4 +181,31 @@ void main() {
     await expectLater(api.stats(), throwsA(isA<ApiException>()));
     expect(unverified, 1);
   });
+
+  test('Muestra con varias placas y enlace de exportación', () async {
+    final api = ApiClient('http://srv', token: 't', client: MockClient((req) async {
+      if (req.url.path == '/samples') {
+        expect(req.url.queryParameters['project_id'], '3');
+        return _json([
+          {
+            'name': 'Punto 1', 'project_id': 3, 'project_name': 'Río', 'last_at': '2026-10-30T10:00:00',
+            'result': {'cfu_per_ml': 2.74e6, 'estimated': false, 'used': [1, 2], 'rule': 'ISO', 'warnings': ['ojo']},
+            'plates': [
+              {'id': 1, 'sample_name': 'A', 'created_at': '2026-10-30T09:00:00', 'dilution': 0.001, 'volume_ml': 0.1,
+               'total': 280, 'status': 'contable', 'cfu_per_ml': 2.8e6, 'used': true, 'thumb_url': '/t1'},
+              {'id': 3, 'sample_name': 'C', 'created_at': '2026-10-30T09:05:00', 'dilution': 0.00001, 'volume_ml': 0.1,
+               'total': 2, 'status': 'pocas', 'cfu_per_ml': 2e6, 'used': false, 'thumb_url': '/t3'},
+            ],
+          }
+        ], 200);
+      }
+      expect(jsonDecode(req.body), {'project_id': 3});
+      return _json({'url': '/export/R%C3%ADo.csv?token=x'}, 200);
+    }));
+    final m = (await api.samples(projectId: 3)).single;
+    expect(m.cfuPerMl, 2.74e6);
+    expect(m.usedCount, 1);
+    expect(m.plates.last.used, isFalse);
+    expect(await api.csvExportLink(projectId: 3), 'http://srv/export/R%C3%ADo.csv?token=x');
+  });
 }

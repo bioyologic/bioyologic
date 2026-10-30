@@ -35,7 +35,9 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _volume = TextEditingController();
+  final _group = TextEditingController();
   List<Project> _projects = [];
+  List<String> _groups = [];
   int? _projectId;
   int? _dilutionExp = 4;
   bool _plateFillsPhoto = true;
@@ -50,6 +52,9 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
     state.api.projects().then((p) {
       if (mounted) setState(() => _projects = p);
     }).catchError((_) {});
+    state.api.sampleGroups().then((g) {
+      if (mounted) setState(() => _groups = g);
+    }).catchError((_) {});
     state.api.stats().then((s) {
       if (mounted && _name.text.isEmpty) _name.text = 'Caja #${s.analyses + 1}';
     }).catchError((_) {});
@@ -59,6 +64,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
   void dispose() {
     _name.dispose();
     _volume.dispose();
+    _group.dispose();
     super.dispose();
   }
 
@@ -90,6 +96,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
         volumeMl: _dilution == null ? null : _volumeMl,
         plateFraction: fraction,
         plateDiameterMm: state.plateDiameterMm,
+        sampleGroup: _group.text,
       );
       state.dataChanged();
       if (!mounted) return;
@@ -138,6 +145,30 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
                 ],
                 onChanged: (v) => setState(() => _projectId = v),
               ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _group,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Muestra (opcional)',
+                  hintText: 'p. ej. Agua río punto 1',
+                  prefixIcon: Icon(Icons.science_outlined),
+                  helperText: 'Usa el mismo nombre en todas las placas de una muestra (diluciones y réplicas) '
+                      'para calcular su UFC/mL combinada.',
+                  helperMaxLines: 3,
+                ),
+              ),
+              if (_groups.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Wrap(spacing: 6, runSpacing: 4, children: [
+                  for (final g in _groups.take(8))
+                    ActionChip(
+                      label: Text(g),
+                      avatar: const Icon(Icons.add, size: 16),
+                      onPressed: () => setState(() => _group.text = g),
+                    ),
+                ]),
+              ],
               const SizedBox(height: 22),
               const Text('Siembra', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
