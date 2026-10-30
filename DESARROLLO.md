@@ -25,7 +25,7 @@ py -3.11 -m venv .venv
 .venv/Scripts/python -m uvicorn bioyologic.api.main:app --app-dir backend --port 8000
 ```
 
-La documentación interactiva de la API queda en http://localhost:8000/docs. Para producción basta `backend/requirements-server.txt` (ONNX Runtime, sin PyTorch). Las variables de configuración están en la cabecera de `backend/bioyologic/api/main.py` y en `deploy/.env.example`.
+La documentación interactiva de la API está publicada en **https://bioyologic.duckdns.org/docs** (si corres el servidor en tu propio PC, también en `http://localhost:8000/docs`). Para producción basta `backend/requirements-server.txt` (ONNX Runtime, sin PyTorch). Las variables de configuración están en la cabecera de `backend/bioyologic/api/main.py` y en `deploy/.env.example`.
 
 **App**
 
