@@ -71,8 +71,17 @@ Se guardan en `~/backups` durante 14 días. Conviene copiarlas de vez en cuando 
 
 ## Actualizar
 
+Desde el PC, con la app web ya compilada (`cd app && flutter build web --base-href /app/`):
+
 ```bash
-cd ~/bioyologic && git pull && cd deploy && docker compose up -d --build
+sh deploy/actualizar_desde_pc.sh
+```
+
+Hace una copia de seguridad, trae el código nuevo de GitHub, sube la app web y reconstruye el contenedor. No toca los modelos que ya están en la VM. A mano, en la VM:
+
+```bash
+cd ~/bioyologic && git fetch origin && git checkout origin/main -- backend deploy Dockerfile LICENSE
+cd deploy && docker compose up -d --build
 ```
 
 ### Cuentas de usuario y datos antiguos
