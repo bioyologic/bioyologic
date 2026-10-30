@@ -17,7 +17,6 @@ Bioyologic se distribuye bajo **AGPL-3.0-or-later** (archivo `LICENSE`). Todas l
 | [python-multipart](https://github.com/Kludex/python-multipart) | Subida de fotos | Apache-2.0 |
 | [ReportLab](https://www.reportlab.com/opensource/) (edición libre) | Informe PDF | BSD |
 | [PyYAML](https://pyyaml.org) | Configuración del entrenamiento local | MIT |
-| [PyMuPDF](https://pymupdf.readthedocs.io) | Solo para generar figuras del documento (`docs/make_figures.py`) | AGPL-3.0 |
 | [Flutter](https://flutter.dev) y Dart SDK | App móvil | BSD-3-Clause |
 | Paquetes Flutter: `http`, `intl`, `camera`, `image_picker`, `shared_preferences`, `url_launcher`, `cupertino_icons` | App móvil | BSD-3-Clause |
 | [Caddy](https://caddyserver.com) | Proxy HTTPS del despliegue (`deploy/`) | Apache-2.0 |
@@ -34,4 +33,4 @@ Las tres fotos de ejemplo de `data/demo_photos/reales/` provienen de estos datas
 
 ## Modelos entrenados
 
-`bioyologic.pt` / `.onnx` (detector) y `bioyologic_species.pt` / `.onnx` (clasificador de especie) se derivan de pesos preentrenados de Ultralytics y de los datasets anteriores. Se distribuyen bajo **AGPL-3.0**, con la atribución CC BY 4.0 a los datasets. Detalles en [`docs/model_card.md`](docs/model_card.md).
+`bioyologic.pt` / `.onnx` (detector) y `bioyologic_species.pt` / `.onnx` (clasificador de especie) se derivan de pesos preentrenados de Ultralytics y de los datasets anteriores. Se distribuyen bajo **AGPL-3.0**, con la atribución CC BY 4.0 a los datasets. Detalles en [`MODEL_CARD.md`](MODEL_CARD.md).

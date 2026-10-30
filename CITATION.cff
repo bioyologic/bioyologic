@@ -5,10 +5,14 @@ type: software
 authors:
   - given-names: "Juan José"
     family-names: "Martínez"
+  - given-names: "Laura"
+    family-names: "Suárez"
+  - given-names: "Samuel"
+    family-names: "Núñez"
 license: AGPL-3.0-or-later
 repository-code: "https://github.com/bioyologic/bioyologic"
-version: 0.1.0
-date-released: 2026-10-11
+version: 1.1.0
+date-released: 2026-10-30
 keywords:
   - microbiología
   - colonias bacterianas

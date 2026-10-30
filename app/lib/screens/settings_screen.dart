@@ -88,7 +88,7 @@ class SettingsScreen extends StatelessWidget {
           const _Title('Información'),
           const Card(
             child: Column(children: [
-              ListTile(leading: Icon(Icons.info_outline), title: Text('Versión de la app'), trailing: Text('1.0.0')),
+              ListTile(leading: Icon(Icons.info_outline), title: Text('Versión de la app'), trailing: Text('1.1.0')),
             ]),
           ),
           const SizedBox(height: 20),

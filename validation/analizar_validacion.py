@@ -1,7 +1,7 @@
 """Estadística de la validación: conteo manual vs Bioyologic vs otros softwares.
 
 Uso:
-    python docs/validation/analizar_validacion.py conteos.csv [--salida carpeta]
+    python validation/analizar_validacion.py conteos.csv [--salida carpeta]
 
 El CSV tiene una fila por conteo (ver plantilla_conteos.csv):
 

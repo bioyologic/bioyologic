@@ -47,7 +47,7 @@ Anotar todo en [`plantilla_conteos.csv`](plantilla_conteos.csv): una fila por co
 ## 5. Análisis
 
 ```bash
-python docs/validation/analizar_validacion.py docs/validation/plantilla_conteos.csv
+python validation/analizar_validacion.py validation/plantilla_conteos.csv
 ```
 
 El script calcula, por cada método frente al promedio del conteo manual:
