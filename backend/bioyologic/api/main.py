@@ -13,8 +13,13 @@ Variables de entorno:
     BIOYOLOGIC_CONF           confianza mínima del detector
     BIOYOLOGIC_MAX_UPLOAD_MB  tamaño máximo de la foto (por defecto 15)
     BIOYOLOGIC_RATE_LIMIT     análisis por minuto y por IP (por defecto 20; 0 = sin límite)
+    BIOYOLOGIC_LOGIN_LIMIT    intentos de inicio de sesión o registro por minuto y por IP (por defecto 10)
     BIOYOLOGIC_CORS_ORIGINS   orígenes permitidos separados por comas (por defecto *)
     BIOYOLOGIC_SOURCE_URL     URL del código fuente (AGPL-3.0, sección 13)
+    BIOYOLOGIC_CONTACT_EMAIL  correo del responsable del tratamiento de datos (Ley 1581 de 2012)
+
+Cuentas: cada usuario solo ve sus proyectos y análisis. La app envía `Authorization: Bearer <token>`;
+las imágenes y el PDF de un análisis se piden con la clave secreta `?key=` que viene en sus URLs.
 
 Si existe app/build/web (flutter build web), la app se sirve en /app.
 """
@@ -23,6 +28,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import secrets
 import threading
 import time
 from collections import defaultdict, deque
@@ -33,7 +40,8 @@ import cv2
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -53,8 +61,12 @@ DEFAULT_DATA = ROOT / "data" / "store"
 WEB_BUILD = Path(os.environ.get("BIOYOLOGIC_WEB", ROOT / "app" / "build" / "web"))
 MAX_UPLOAD_MB = float(os.environ.get("BIOYOLOGIC_MAX_UPLOAD_MB", "15"))
 RATE_LIMIT = int(os.environ.get("BIOYOLOGIC_RATE_LIMIT", "20"))
+LOGIN_LIMIT = int(os.environ.get("BIOYOLOGIC_LOGIN_LIMIT", "10"))
 SOURCE_URL = os.environ.get("BIOYOLOGIC_SOURCE_URL", "https://github.com/bioyologic/bioyologic")
+CONTACT_EMAIL = os.environ.get("BIOYOLOGIC_CONTACT_EMAIL", "")
 LICENSE = "AGPL-3.0-or-later"
+# Versión de la política de privacidad que el usuario acepta al registrarse.
+PRIVACY_VERSION = "2026-10"
 
 app = FastAPI(title="Bioyologic API", version=__version__,
               description="Conteo y caracterización de colonias bacterianas en placas de Petri. "
@@ -127,35 +139,59 @@ def _warm_up() -> None:
 
 # --------------------------------------------------------------------- utilidades
 def _with_urls(a: dict) -> dict:
-    aid = a["id"]
-    a["image_urls"] = {k: f"/analyses/{aid}/image/{k}" for k in IMAGE_KINDS}
-    a["report_url"] = f"/analyses/{aid}/report.pdf"
+    """URLs de imágenes y PDF con la clave secreta del análisis (no se pueden adivinar)."""
+    aid, key = a["id"], a.pop("access_key")
+    a.pop("user_id", None)
+    a["image_urls"] = {k: f"/analyses/{aid}/image/{k}?key={key}" for k in IMAGE_KINDS}
+    a["report_url"] = f"/analyses/{aid}/report.pdf?key={key}"
     return a
 
 
 def _project_out(p: dict) -> dict:
-    cover = p.get("cover_analysis_id")
-    p["cover_url"] = f"/analyses/{cover}/image/thumb" if cover else None
+    cover, key = p.pop("cover_analysis_id", None), p.pop("cover_access_key", None)
+    p.pop("user_id", None)
+    p["cover_url"] = f"/analyses/{cover}/image/thumb?key={key}" if cover else None
     p["progress"] = min(1.0, p["analyses_count"] / max(1, p["target_samples"]))
     return p
 
 
-_hits: dict[str, deque] = defaultdict(deque)
+_hits: dict[tuple[str, str], deque] = defaultdict(deque)
 
 
-def rate_limit(request: Request) -> None:
-    """Límite simple por IP para los análisis (el paso costoso). En memoria, por proceso."""
-    if RATE_LIMIT <= 0:
+def _limit(request: Request, bucket: str, limit: int, message: str) -> None:
+    """Límite simple por IP y por tipo de petición. En memoria, por proceso."""
+    if limit <= 0:
         return
     # Detrás de Caddy (deploy/Caddyfile) la IP real llega en X-Real-IP, que el proxy sobrescribe
     # siempre; X-Forwarded-For no se usa porque el cliente puede falsificarlo.
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
-    now, q = time.monotonic(), _hits[ip]
+    now, q = time.monotonic(), _hits[(bucket, ip)]
     while q and now - q[0] > 60:
         q.popleft()
-    if len(q) >= RATE_LIMIT:
-        raise HTTPException(429, "Demasiados análisis seguidos. Espera un minuto.")
+    if len(q) >= limit:
+        raise HTTPException(429, message)
     q.append(now)
+
+
+def rate_limit(request: Request) -> None:
+    """Los análisis son el paso costoso."""
+    _limit(request, "analyses", RATE_LIMIT, "Demasiados análisis seguidos. Espera un minuto.")
+
+
+def login_limit(request: Request) -> None:
+    """Frena los intentos de adivinar contraseñas."""
+    _limit(request, "auth", LOGIN_LIMIT, "Demasiados intentos. Espera un minuto.")
+
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+                 store: Store = Depends(get_store)) -> dict:
+    user = store.session_user(creds.credentials) if creds else None
+    if user is None:
+        raise HTTPException(401, "Inicia sesión para continuar", headers={"WWW-Authenticate": "Bearer"})
+    return user
 
 
 def _require(obj, what: str):
@@ -192,10 +228,12 @@ def about() -> dict:
     return {"name": "Bioyologic", "version": __version__, "license": LICENSE,
             "license_url": "https://www.gnu.org/licenses/agpl-3.0.html", "source_url": SOURCE_URL,
             "model": _model_path().name, "max_upload_mb": MAX_UPLOAD_MB,
+            "privacy_version": PRIVACY_VERSION, "contact_email": CONTACT_EMAIL,
             "datasets": [
-                {"name": "Makrai et al. 2023", "license": "CC BY 4.0",
+                {"name": "Makrai, L. et al. (2023). Annotated dataset for deep-learning-based bacterial "
+                         "colony detection", "license": "CC BY 4.0",
                  "url": "https://doi.org/10.6084/m9.figshare.22022540"},
-                {"name": "Clinical Dataset of 19 Bacterial Colony Images (Zenodo)", "license": "CC BY 4.0",
+                {"name": "Du, J. (2026). Clinical Dataset of 19 Bacterial Colony Images", "license": "CC BY 4.0",
                  "url": "https://doi.org/10.5281/zenodo.18256864"}]}
 
 
@@ -207,8 +245,135 @@ def model_info(detector: ColonyDetector = Depends(get_detector),
 
 
 @app.get("/stats")
-def stats(store: Store = Depends(get_store)) -> dict:
-    return store.stats()
+def stats(store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+    return store.stats(user["id"])
+
+
+# --------------------------------------------------------------------- cuentas
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class RegisterIn(BaseModel):
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., min_length=8, max_length=128)
+    name: str = Field(..., min_length=1, max_length=120)
+    role: str = Field("", max_length=120)
+    institution: str = Field("", max_length=160)
+    accept_privacy: bool = Field(..., description="Autorización del tratamiento de datos (Ley 1581 de 2012)")
+
+
+class LoginIn(BaseModel):
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., max_length=128)
+
+
+class ProfilePatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    role: str | None = Field(None, max_length=120)
+    institution: str | None = Field(None, max_length=160)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class DeleteAccount(BaseModel):
+    password: str = Field(..., max_length=128)
+
+
+def _session(store: Store, user: dict) -> dict:
+    return {"token": store.create_session(user["id"]), "user": user}
+
+
+@app.post("/auth/register", status_code=201)
+def register(body: RegisterIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
+    email = body.email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(422, "Correo electrónico no válido")
+    if not body.accept_privacy:
+        raise HTTPException(422, "Debes autorizar el tratamiento de tus datos para crear la cuenta")
+    user = store.create_user(email=email, password=body.password, name=body.name.strip(),
+                             role=body.role.strip(), institution=body.institution.strip(),
+                             consent_version=PRIVACY_VERSION)
+    if user is None:
+        raise HTTPException(409, "Ya existe una cuenta con ese correo")
+    return _session(store, user)
+
+
+@app.post("/auth/login")
+def login(body: LoginIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
+    user = store.authenticate(body.email.strip().lower(), body.password)
+    if user is None:
+        raise HTTPException(401, "Correo o contraseña incorrectos")
+    return _session(store, user)
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+           store: Store = Depends(get_store)) -> Response:
+    if creds:
+        store.delete_session(creds.credentials)
+    return Response(status_code=204)
+
+
+@app.get("/auth/me")
+def me(user: dict = Depends(current_user)) -> dict:
+    return user
+
+
+@app.patch("/auth/me")
+def update_me(body: ProfilePatch, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+    fields = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    return store.update_user(user["id"], **fields)
+
+
+@app.post("/auth/me/password", status_code=204)
+def change_password(body: PasswordChange, store: Store = Depends(get_store),
+                    user: dict = Depends(current_user), _: None = Depends(login_limit)) -> Response:
+    if store.authenticate(user["email"], body.current_password) is None:
+        raise HTTPException(403, "La contraseña actual no es correcta")
+    store.set_password(user["id"], body.new_password)  # cierra todas las sesiones
+    return Response(status_code=204)
+
+
+@app.delete("/auth/me", status_code=204)
+def delete_me(body: DeleteAccount, store: Store = Depends(get_store),
+              user: dict = Depends(current_user), _: None = Depends(login_limit)) -> Response:
+    """Derecho de supresión: borra la cuenta y todos sus datos, fotos incluidas."""
+    if store.authenticate(user["email"], body.password) is None:
+        raise HTTPException(403, "La contraseña no es correcta")
+    store.delete_user(user["id"])
+    return Response(status_code=204)
+
+
+# Enlaces de descarga de un solo uso: el navegador los abre sin poder enviar el token.
+_export_links: dict[str, tuple[int, float]] = {}
+
+
+@app.post("/auth/me/export-link")
+def export_link(user: dict = Depends(current_user)) -> dict:
+    """Derecho de acceso: enlace de 5 minutos para descargar todos los datos del usuario."""
+    now = time.monotonic()
+    for t, (_, exp) in list(_export_links.items()):
+        if exp < now:
+            del _export_links[t]
+    token = secrets.token_urlsafe(24)
+    _export_links[token] = (user["id"], now + 300)
+    return {"url": f"/auth/me/export?token={token}"}
+
+
+@app.get("/auth/me/export")
+def export_data(token: str, store: Store = Depends(get_store)) -> JSONResponse:
+    uid, exp = _export_links.pop(token, (None, 0.0))
+    if uid is None or exp < time.monotonic():
+        raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
+    data = store.export_user(uid)
+    for a in data["analyses"]:
+        _with_urls(a)
+    for p in data["projects"]:
+        _project_out(p)
+    return JSONResponse(data, headers={"Content-Disposition": 'attachment; filename="bioyologic_mis_datos.json"'})
 
 
 # --------------------------------------------------------------------- análisis
@@ -226,6 +391,7 @@ async def create_analysis(
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
     species_clf: SpeciesClassifier | None = Depends(get_species),
+    user: dict = Depends(current_user),
     _: None = Depends(rate_limit),
 ) -> dict:
     if dilution is not None and dilution <= 0:
@@ -233,7 +399,7 @@ async def create_analysis(
     if volume_ml is not None and volume_ml <= 0:
         raise HTTPException(422, "El volumen debe ser > 0")
     if project_id is not None:
-        _require(store.get_project(project_id), "Proyecto")
+        _require(store.get_project(project_id, user["id"]), "Proyecto")
     data = await image.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"Imagen demasiado grande (máx. {MAX_UPLOAD_MB:g} MB)")
@@ -245,21 +411,21 @@ async def create_analysis(
     dets, species = classify_species(img, detector.detect(img), species_clf)
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
-    saved = store.add_analysis(sample_name=sample_name.strip(), result=result, original=img,
-                               annotated=annotated, project_id=project_id, dilution=dilution,
-                               volume_ml=volume_ml, notes=notes)
+    saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
+                               original=img, annotated=annotated, project_id=project_id,
+                               dilution=dilution, volume_ml=volume_ml, notes=notes)
     return _with_urls(saved)
 
 
 @app.get("/analyses")
 def list_analyses(project_id: int | None = None, q: str = "", limit: int = 50, offset: int = 0,
-                  store: Store = Depends(get_store)) -> list[dict]:
-    return [_with_urls(a) for a in store.list_analyses(project_id, q, min(limit, 200), offset)]
+                  store: Store = Depends(get_store), user: dict = Depends(current_user)) -> list[dict]:
+    return [_with_urls(a) for a in store.list_analyses(user["id"], project_id, q, min(limit, 200), offset)]
 
 
 @app.get("/analyses/{analysis_id}")
-def get_analysis(analysis_id: int, store: Store = Depends(get_store)) -> dict:
-    return _with_urls(_require(store.get_analysis(analysis_id), "Análisis"))
+def get_analysis(analysis_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+    return _with_urls(_require(store.get_analysis(analysis_id, user["id"]), "Análisis"))
 
 
 class AnalysisPatch(BaseModel):
@@ -269,34 +435,38 @@ class AnalysisPatch(BaseModel):
 
 
 @app.patch("/analyses/{analysis_id}")
-def update_analysis(analysis_id: int, body: AnalysisPatch, store: Store = Depends(get_store)) -> dict:
-    _require(store.get_analysis(analysis_id, False), "Análisis")
+def update_analysis(analysis_id: int, body: AnalysisPatch, store: Store = Depends(get_store),
+                    user: dict = Depends(current_user)) -> dict:
+    _require(store.get_analysis(analysis_id, user["id"], False), "Análisis")
     fields = body.model_dump(exclude_unset=True)
     if fields.get("project_id"):
-        _require(store.get_project(fields["project_id"]), "Proyecto")
-    return _with_urls(store.update_analysis(analysis_id, **fields))
+        _require(store.get_project(fields["project_id"], user["id"]), "Proyecto")
+    return _with_urls(store.update_analysis(analysis_id, user["id"], **fields))
 
 
 @app.delete("/analyses/{analysis_id}", status_code=204)
-def delete_analysis(analysis_id: int, store: Store = Depends(get_store)) -> Response:
-    _require(store.delete_analysis(analysis_id) or None, "Análisis")
+def delete_analysis(analysis_id: int, store: Store = Depends(get_store),
+                    user: dict = Depends(current_user)) -> Response:
+    _require(store.delete_analysis(analysis_id, user["id"]) or None, "Análisis")
     return Response(status_code=204)
 
 
 @app.get("/analyses/{analysis_id}/image/{kind}")
-def analysis_image(analysis_id: int, kind: str, store: Store = Depends(get_store)) -> FileResponse:
+def analysis_image(analysis_id: int, kind: str, key: str = "", store: Store = Depends(get_store)) -> FileResponse:
     if kind not in IMAGE_KINDS:
         raise HTTPException(404, "Tipo de imagen no válido")
+    expected = store.access_key(analysis_id)
     path = store.image_path(analysis_id, kind)
-    if not path.exists():
+    # Misma respuesta si el análisis no existe o la clave no coincide: no revela qué ids existen.
+    if not (expected and secrets.compare_digest(expected.encode(), key.encode())) or not path.exists():
         raise HTTPException(404, "Imagen no encontrada")
     return FileResponse(path, media_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+                        headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @app.get("/analyses/{analysis_id}/report.pdf")
-def analysis_report(analysis_id: int, store: Store = Depends(get_store)) -> Response:
-    a = _require(store.get_analysis(analysis_id), "Análisis")
+def analysis_report(analysis_id: int, key: str = "", store: Store = Depends(get_store)) -> Response:
+    a = _require(store.get_analysis_by_key(analysis_id, key), "Análisis")
     pdf = build_report(a, store.image_path(analysis_id, "annotated"))
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in a["sample_name"])
     return Response(pdf, media_type="application/pdf",
@@ -317,29 +487,30 @@ class ProjectPatch(BaseModel):
 
 
 @app.get("/projects")
-def list_projects(store: Store = Depends(get_store)) -> list[dict]:
-    return [_project_out(p) for p in store.list_projects()]
+def list_projects(store: Store = Depends(get_store), user: dict = Depends(current_user)) -> list[dict]:
+    return [_project_out(p) for p in store.list_projects(user["id"])]
 
 
 @app.post("/projects", status_code=201)
-def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> dict:
-    return _project_out(store.create_project(body.name.strip(), body.description, body.target_samples))
+def create_project(body: ProjectIn, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+    return _project_out(store.create_project(user["id"], body.name.strip(), body.description, body.target_samples))
 
 
 @app.get("/projects/{project_id}")
-def get_project(project_id: int, store: Store = Depends(get_store)) -> dict:
-    return _project_out(_require(store.get_project(project_id), "Proyecto"))
+def get_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> dict:
+    return _project_out(_require(store.get_project(project_id, user["id"]), "Proyecto"))
 
 
 @app.patch("/projects/{project_id}")
-def update_project(project_id: int, body: ProjectPatch, store: Store = Depends(get_store)) -> dict:
-    _require(store.get_project(project_id), "Proyecto")
-    return _project_out(store.update_project(project_id, **body.model_dump(exclude_unset=True)))
+def update_project(project_id: int, body: ProjectPatch, store: Store = Depends(get_store),
+                   user: dict = Depends(current_user)) -> dict:
+    _require(store.get_project(project_id, user["id"]), "Proyecto")
+    return _project_out(store.update_project(project_id, user["id"], **body.model_dump(exclude_unset=True)))
 
 
 @app.delete("/projects/{project_id}", status_code=204)
-def delete_project(project_id: int, store: Store = Depends(get_store)) -> Response:
-    _require(store.delete_project(project_id) or None, "Proyecto")
+def delete_project(project_id: int, store: Store = Depends(get_store), user: dict = Depends(current_user)) -> Response:
+    _require(store.delete_project(project_id, user["id"]) or None, "Proyecto")
     return Response(status_code=204)
 
 

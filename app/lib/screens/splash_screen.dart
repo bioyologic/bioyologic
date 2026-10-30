@@ -6,7 +6,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'shell.dart';
-import 'welcome_screen.dart';
+import 'start_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -23,7 +23,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     super.initState();
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (!mounted) return;
-      final next = AppScope.read(context).hasProfile ? const Shell() : const WelcomeScreen();
+      final state = AppScope.read(context);
+      // Actualiza nombre e institución en segundo plano; si la sesión ya no vale, la app vuelve al login.
+      if (state.isLoggedIn) state.refreshProfile().catchError((_) {});
+      final next = state.isLoggedIn ? const Shell() : const StartScreen();
       Navigator.of(context).pushReplacement(PageRouteBuilder(
         pageBuilder: (_, _, _) => next,
         transitionsBuilder: (_, a, _, child) => FadeTransition(opacity: a, child: child),

@@ -40,14 +40,63 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             FilledButton(
               onPressed: () async {
                 if (_name.text.trim().isEmpty) return showSnack(context, 'El nombre es obligatorio');
-                await _s.saveProfile(name: _name.text, role: _role.text, institution: _inst.text);
-                if (context.mounted) Navigator.pop(context);
+                try {
+                  await _s.updateProfile(name: _name.text, role: _role.text, institution: _inst.text);
+                  if (context.mounted) Navigator.pop(context);
+                } catch (e) {
+                  if (context.mounted) showSnack(context, '$e');
+                }
               },
               child: const Text('Guardar'),
+            ),
+            const SizedBox(height: 28),
+            Text('Correo: ${_s.userEmail}',
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.lock_reset),
+              label: const Text('Cambiar contraseña'),
+              onPressed: () => _changePassword(context),
             ),
           ],
         ),
       );
+
+  Future<void> _changePassword(BuildContext context) async {
+    final current = TextEditingController();
+    final next = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cambiar contraseña'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: current, obscureText: true,
+              decoration: const InputDecoration(labelText: 'Contraseña actual')),
+          const SizedBox(height: 12),
+          TextField(controller: next, obscureText: true,
+              decoration: const InputDecoration(labelText: 'Nueva contraseña (mín. 8)')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Cambiar')),
+        ],
+      ),
+    );
+    final (cur, nxt) = (current.text, next.text);
+    current.dispose();
+    next.dispose();
+    if (ok != true || !context.mounted) return;
+    if (nxt.length < 8) return showSnack(context, 'La nueva contraseña debe tener al menos 8 caracteres');
+    try {
+      final email = _s.userEmail;
+      await _s.api.changePassword(cur, nxt);
+      // El servidor cierra todas las sesiones al cambiar la contraseña: se entra de nuevo con la nueva.
+      await _s.login(email, nxt);
+      if (context.mounted) showSnack(context, 'Contraseña actualizada');
+    } catch (e) {
+      if (context.mounted) showSnack(context, '$e');
+    }
+  }
 }
 
 class _TextPage extends StatelessWidget {
@@ -153,11 +202,13 @@ class _AboutScreenState extends State<AboutScreen> {
                 const SizedBox(height: 12),
                 const Text('Datos de entrenamiento', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
-                _link(Icons.dataset_outlined, 'Makrai L. et al. (2023)',
-                    'Scientific Data 10:497 · 369 placas, 24 especies · CC BY 4.0',
+                _link(Icons.dataset_outlined, 'Makrai, L. et al. (2023)',
+                    'Annotated dataset for deep-learning-based bacterial colony detection. Scientific Data 10:497 · '
+                        '369 placas, 24 especies · CC BY 4.0',
                     () => _open('https://doi.org/10.6084/m9.figshare.22022540')),
-                _link(Icons.dataset_outlined, 'Clinical Dataset of 19 Bacterial Colony Images',
-                    'Zenodo · 950 placas, 19 especies · CC BY 4.0',
+                _link(Icons.dataset_outlined, 'Du, J. (2026)',
+                    'Clinical Dataset of 19 Bacterial Colony Images. First Hospital of Jilin University; '
+                        'publicado en Zenodo · 950 placas, 19 especies · CC BY 4.0',
                     () => _open('https://doi.org/10.5281/zenodo.18256864')),
                 const SizedBox(height: 12),
                 const Text('Aviso', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
@@ -177,24 +228,39 @@ class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => const _TextPage('Privacidad', [
-        ('Qué se envía al servidor',
-            'Solo las fotos que analizas y los datos de cada muestra (nombre, proyecto, dilución, volumen y notas), '
-                'para calcular los resultados y guardar tu historial.'),
-        ('Qué se queda en tu teléfono',
-            'Tu perfil (nombre, cargo e institución) y tus preferencias. Nunca se envían al servidor.'),
-        ('Qué no hacemos',
-            'No hay cuentas de usuario, publicidad, analítica ni rastreadores. No pedimos tu ubicación ni tus '
-                'contactos, y no compartimos las fotos con terceros.'),
-        ('Servidores compartidos',
-            'En un servidor público, quien use la misma instancia puede ver los análisis guardados. No subas fotos '
-                'con datos personales o de pacientes. Si quieres control total, instala tu propio servidor: '
-                'Bioyologic es software libre.'),
-        ('Borrar tus datos',
-            'Al eliminar un análisis se borran también sus fotos del servidor. "Cerrar sesión" borra tu perfil '
-                'de este teléfono.'),
-        ('Permisos',
-            'Cámara: para fotografiar la placa. Fotos: para elegir una imagen de la galería. Solo se envía la foto '
-                'cuando pulsas "Analizar".'),
+  Widget build(BuildContext context) => const _TextPage('Política de privacidad', [
+        ('Marco legal',
+            'Bioyologic trata tus datos personales conforme a la Ley 1581 de 2012 de protección de datos '
+                'personales de Colombia y el Decreto 1377 de 2013. Versión de la política: octubre de 2026.'),
+        ('Responsable',
+            'El equipo del proyecto Bioyologic (Pontificia Universidad Javeriana), que administra el servidor '
+                'donde se guarda tu cuenta. Puedes contactarnos desde el repositorio del proyecto '
+                '(github.com/bioyologic/bioyologic).'),
+        ('Qué datos guardamos',
+            'De tu cuenta: nombre, correo, profesión o rol, institución y la fecha en que aceptaste esta '
+                'política. Tu contraseña se guarda cifrada (scrypt) y nadie, ni siquiera el equipo, puede leerla. '
+                'De tu trabajo: las fotos que analizas y los datos de cada muestra (nombre, proyecto, dilución, '
+                'volumen, notas y resultados).'),
+        ('Para qué',
+            'Solo para identificarte, calcular los resultados y guardar tu historial y tus proyectos. '
+                'No vendemos ni compartimos tus datos, no hay publicidad, analítica ni rastreadores, y no pedimos '
+                'tu ubicación ni tus contactos.'),
+        ('Quién ve tus datos',
+            'Solo tú. Cada cuenta ve únicamente sus propios análisis y proyectos. Las fotos y los informes PDF '
+                'se abren con un enlace secreto que solo conoce tu cuenta. La conexión con el servidor va cifrada '
+                '(HTTPS).'),
+        ('Datos de pacientes',
+            'No subas fotos ni notas con nombres, documentos u otros datos de pacientes. Usa códigos de muestra.'),
+        ('Tus derechos',
+            'Puedes conocer, actualizar, rectificar y suprimir tus datos, y revocar esta autorización, en '
+                'cualquier momento y sin costo, desde Perfil: "Mi perfil" para actualizarlos, "Descargar mis '
+                'datos" para recibir una copia completa y "Eliminar mi cuenta" para borrar del servidor la cuenta '
+                'y todos sus análisis, proyectos y fotos.'),
+        ('Conservación',
+            'Tus datos se guardan mientras tengas la cuenta. Al eliminarla se borran de inmediato del servidor; '
+                'las copias de seguridad nocturnas se sobrescriben en un máximo de 14 días.'),
+        ('Permisos del teléfono',
+            'Cámara: para fotografiar la placa. Fotos: para elegir una imagen de la galería. Solo se envía la '
+                'foto cuando pulsas "Analizar".'),
       ]);
 }

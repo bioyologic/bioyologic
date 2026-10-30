@@ -30,7 +30,7 @@ Las tres fotos de ejemplo de `data/demo_photos/reales/` provienen de estos datas
 | Dataset | Uso | Licencia |
 |---|---|---|
 | Makrai, L. *et al.* (2023). *Scientific Data* 10:497. Figshare. [doi:10.6084/m9.figshare.22022540](https://doi.org/10.6084/m9.figshare.22022540) | Entrenamiento del detector y del clasificador | CC BY 4.0 |
-| *Clinical Dataset of 19 Bacterial Colony Images.* Zenodo. [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864) | Entrenamiento del detector y del clasificador | CC BY 4.0 |
+| Du, J. (2026). *Clinical Dataset of 19 Bacterial Colony Images* [Data set]. Zenodo. [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864) | Entrenamiento del detector y del clasificador | CC BY 4.0 |
 
 ## Modelos entrenados
 

@@ -75,6 +75,21 @@ Se guardan en `~/backups` durante 14 días. Conviene copiarlas de vez en cuando 
 cd ~/bioyologic && git pull && cd deploy && docker compose up -d --build
 ```
 
+### Cuentas de usuario y datos antiguos
+
+Desde la versión con cuentas, cada usuario solo ve sus propios análisis y proyectos. Al actualizar, la base de
+datos se migra sola y los análisis creados antes (las pruebas del equipo) quedan **sin dueño**: nadie los ve en
+la app. Para revisarlos y decidir qué hacer con ellos:
+
+```bash
+docker compose exec -w /srv/backend bioyologic python -m bioyologic.manage orphans               # cuántos hay
+docker compose exec -w /srv/backend bioyologic python -m bioyologic.manage claim tu@correo.com   # pasarlos a tu cuenta
+docker compose exec -w /srv/backend bioyologic python -m bioyologic.manage delete-orphans --yes  # o borrarlos
+docker compose exec -w /srv/backend bioyologic python -m bioyologic.manage users                 # cuentas registradas
+```
+
+La app y el servidor deben actualizarse juntos: la app anterior no envía la sesión y recibiría error 401.
+
 ## Alternativa: Hugging Face Spaces (demo)
 
 1. Crea un *Space* de tipo **Docker** y sube el `Dockerfile`, `backend/`, `models/*.onnx`, `models/*.json`, `app/build/web` y `LICENSE`.
@@ -96,3 +111,5 @@ Ver `.env.example` y la cabecera de `backend/bioyologic/api/main.py`. Las más i
 | `BIOYOLOGIC_SOURCE_URL` | Enlace al código fuente. La AGPL-3.0 obliga a ofrecerlo a quien usa el servidor; la app lo muestra en «Acerca de» |
 | `BIOYOLOGIC_RATE_LIMIT` | Máximo de análisis por minuto desde una misma IP |
 | `BIOYOLOGIC_MAX_UPLOAD_MB` | Tamaño máximo de cada foto |
+| `BIOYOLOGIC_LOGIN_LIMIT` | Máximo de intentos de inicio de sesión o registro por minuto desde una misma IP |
+| `BIOYOLOGIC_CONTACT_EMAIL` | Correo del responsable del tratamiento de datos (Ley 1581 de 2012); la API lo publica en `/about` |

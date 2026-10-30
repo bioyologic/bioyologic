@@ -32,9 +32,18 @@ def ctx(tmp_path):
     app.dependency_overrides[get_detector] = lambda: FakeDetector(labels)
     app.dependency_overrides[get_species] = lambda: None
     _, buf = cv2.imencode(".jpg", img)
-    yield TestClient(app), buf.tobytes(), labels
+    client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {_register(client, 'ana@lab.co')['token']}"
+    yield client, buf.tobytes(), labels
     app.dependency_overrides.clear()
     store.close()
+
+
+def _register(client, email, password="clave-segura-1", **extra):
+    body = {"email": email, "password": password, "name": "Ana Pérez", "accept_privacy": True, **extra}
+    r = client.post("/auth/register", json=body)
+    assert r.status_code == 201, r.text
+    return r.json()
 
 
 def _upload(client, jpg, **fields):
@@ -71,7 +80,7 @@ def test_full_flow(ctx):
     assert "colonies" not in client.get("/analyses").json()[0]
     proj = client.get(f"/projects/{p['id']}").json()
     assert proj["analyses_count"] == 1 and proj["progress"] == 0.25
-    assert proj["cover_url"] == f"/analyses/{a['id']}/image/thumb"
+    assert proj["cover_url"].startswith(f"/analyses/{a['id']}/image/thumb?key=")
 
     # Edición
     upd = client.patch(f"/analyses/{a['id']}", json={"notes": "Repetir", "project_id": 0}).json()

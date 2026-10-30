@@ -1,7 +1,7 @@
 {
  "source": {
   "makrai": "Makrai et al. 2023, Sci Data 10:497 (tabla 1)",
-  "clinical": "Clinical Dataset of 19 Bacterial Colony Images, doi:10.5281/zenodo.18256864 (tabla 1)"
+  "clinical": "Du, J. (2026). Clinical Dataset of 19 Bacterial Colony Images. Zenodo. doi:10.5281/zenodo.18256864 (tabla 1)"
  },
  "codes": {
   "makrai:sp01": {

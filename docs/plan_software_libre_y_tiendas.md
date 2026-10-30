@@ -40,7 +40,7 @@ Bioyologic usa Ultralytics (YOLO11) para entrenar y para detectar. Ultralytics t
 | Flutter y paquetes (http, camera, image_picker, shared_preferences, url_launcher, intl) | BSD-3 / Apache-2.0 | |
 | PyMuPDF | AGPL-3.0 | Solo lo usa el script de figuras del documento |
 | Dataset Makrai et al. 2023 | CC BY 4.0 | Exige atribución; no redistribuimos las fotos |
-| Dataset clínico de Zenodo | CC BY 4.0 | Exige atribución |
+| Dataset clínico de Du, J. (2026), publicado en Zenodo | CC BY 4.0 | Exige atribución |
 | Modelos entrenados (`bioyologic.pt`, `bioyologic_species.pt`) | AGPL-3.0 | Por Ultralytics; los datos piden atribución CC BY |
 
 ### Qué haría para publicarlo como software libre

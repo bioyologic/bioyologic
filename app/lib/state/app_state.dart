@@ -3,8 +3,9 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import '../api/models.dart';
 
-/// Estado global: preferencias, perfil local y cliente de la API.
+/// Estado global: preferencias, sesión del usuario y cliente de la API.
 class AppState extends ChangeNotifier {
   AppState._(this._prefs);
 
@@ -36,18 +37,33 @@ class AppState extends ChangeNotifier {
   // ----------------------------------------------------------------- servidor
   String get serverUrl => _prefs.getString('server_url') ?? defaultServer;
   set serverUrl(String v) {
+    if (v.trim() == serverUrl) return;
     _prefs.setString('server_url', v.trim());
     _api = null;
+    // Las cuentas viven en cada servidor: al cambiarlo hay que iniciar sesión otra vez.
+    _clearSession();
     notifyListeners();
   }
 
-  ApiClient get api => _api ??= ApiClient(serverUrl);
+  ApiClient get api => _api ??= ApiClient(serverUrl, token: _token, onUnauthorized: _sessionExpired);
 
-  // ----------------------------------------------------------------- perfil
+  // ----------------------------------------------------------------- sesión
+  String? get _token => _prefs.getString('auth_token');
+
+  /// Hay una sesión iniciada en este dispositivo.
+  bool get isLoggedIn => _token != null;
+
+  /// Se activa cuando el servidor rechaza la sesión; la app vuelve a la pantalla de inicio de sesión.
+  final sessionExpired = ValueNotifier<int>(0);
+
+  /// Correo con el que se entró por última vez en este dispositivo: si existe, la app propone
+  /// iniciar sesión en vez de registrarse. Se conserva al cerrar sesión.
+  String? get lastEmail => _prefs.getString('last_email');
+
   String? get userName => _prefs.getString('user_name');
+  String get userEmail => _prefs.getString('user_email') ?? '';
   String get userRole => _prefs.getString('user_role') ?? '';
   String get userInstitution => _prefs.getString('user_institution') ?? '';
-  bool get hasProfile => (userName ?? '').isNotEmpty;
 
   String get firstName {
     final parts = (userName ?? '').trim().split(RegExp(r'\s+'));
@@ -61,18 +77,77 @@ class AppState extends ChangeNotifier {
     return parts.take(2).map((p) => p[0].toUpperCase()).join();
   }
 
-  Future<void> saveProfile({required String name, String role = '', String institution = ''}) async {
-    await _prefs.setString('user_name', name.trim());
-    await _prefs.setString('user_role', role.trim());
-    await _prefs.setString('user_institution', institution.trim());
+  /// Guarda en el dispositivo una copia del perfil para mostrarlo sin esperar al servidor.
+  Future<void> _cacheProfile(UserProfile u) async {
+    await _prefs.setString('user_name', u.name);
+    await _prefs.setString('user_email', u.email);
+    await _prefs.setString('user_role', u.role);
+    await _prefs.setString('user_institution', u.institution);
+    notifyListeners();
+  }
+
+  Future<void> _startSession(({String token, UserProfile user}) s) async {
+    await _prefs.setString('auth_token', s.token);
+    await _prefs.setString('last_email', s.user.email);
+    api.token = s.token;
+    await _cacheProfile(s.user);
+    dataChanged();
+  }
+
+  Future<void> login(String email, String password) async => _startSession(await api.login(email, password));
+
+  Future<void> register({
+    required String email,
+    required String password,
+    required String name,
+    String role = '',
+    String institution = '',
+    required bool acceptPrivacy,
+  }) async =>
+      _startSession(await api.register(
+          email: email,
+          password: password,
+          name: name,
+          role: role,
+          institution: institution,
+          acceptPrivacy: acceptPrivacy));
+
+  /// Actualiza la copia local con los datos del servidor (al abrir la app).
+  Future<void> refreshProfile() async => _cacheProfile(await api.me());
+
+  Future<void> updateProfile({required String name, String role = '', String institution = ''}) async =>
+      _cacheProfile(await api.updateMe(name: name.trim(), role: role.trim(), institution: institution.trim()));
+
+  Future<void> deleteAccount(String password) async {
+    await api.deleteAccount(password);
+    await _prefs.remove('last_email');  // la cuenta ya no existe: la próxima vez, registrarse
+    await _clearSession();
     notifyListeners();
   }
 
   Future<void> logout() async {
-    for (final k in ['user_name', 'user_role', 'user_institution']) {
+    try {
+      await api.logout();
+    } catch (_) {
+      // Sin conexión: la sesión caduca sola en el servidor.
+    }
+    await _clearSession();
+    notifyListeners();
+  }
+
+  Future<void> _clearSession() async {
+    for (final k in ['auth_token', 'user_name', 'user_email', 'user_role', 'user_institution']) {
       await _prefs.remove(k);
     }
-    notifyListeners();
+    _api?.token = null;
+  }
+
+  void _sessionExpired() {
+    if (!isLoggedIn) return;
+    _clearSession().then((_) {
+      sessionExpired.value++;
+      notifyListeners();
+    });
   }
 
   // ----------------------------------------------------------------- preferencias

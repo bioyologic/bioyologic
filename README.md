@@ -9,7 +9,7 @@ Sistema híbrido de conteo y caracterización de colonias bacterianas en placas 
 **Híbrido** = un detector de aprendizaje profundo (YOLO) localiza cada colonia, y técnicas clásicas de visión por computador (segmentación por contraste de color en L\*a\*b\*, Otsu, análisis de contornos) miden su morfología dentro de cada detección.
 
 ```
- Datasets públicos (Makrai 2023 + clínico Zenodo)
+ Datasets públicos (Makrai et al. 2023 + Du 2026)
           │  training/Bioyologic_entrenamiento.ipynb  (Google Colab, GPU T4)
           ▼
    models/bioyologic.pt|.onnx + bioyologic.json

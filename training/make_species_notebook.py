@@ -18,7 +18,7 @@ INTRO = """# Bioyologic · Clasificador de especie por colonia (Google Colab)
 
 Segunda etapa de Bioyologic: el **detector** ya encuentra y cuenta las colonias; este notebook entrena un **clasificador** (YOLO11-cls) que mira el recorte de cada colonia y dice su especie. La especie de la placa se decide por votación entre sus colonias.
 
-Datos: los mismos dos datasets públicos (Makrai *et al.* 2023 y el dataset clínico de Zenodo), unificados por nombre de especie: **37 especies**.
+Datos: los mismos dos datasets públicos (Makrai *et al.* 2023 y el dataset clínico de Du, 2026, publicado en Zenodo), unificados por nombre de especie: **37 especies**.
 
 **Cómo usarlo**: `Entorno de ejecución → Cambiar tipo → GPU T4` y `Ejecutar todo` (~1,5 h). Al final se descarga `bioyologic_species.zip` (modelo + configuración): descomprímelo en `models/`.
 

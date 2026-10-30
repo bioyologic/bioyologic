@@ -15,12 +15,20 @@ class ApiException implements Exception {
 
 /// Cliente HTTP de la API de Bioyologic.
 class ApiClient {
-  ApiClient(String baseUrl, {http.Client? client})
+  ApiClient(String baseUrl, {http.Client? client, this.token, this.onUnauthorized})
       : baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), ''),
         _client = client ?? http.Client();
 
   final String baseUrl;
   final http.Client _client;
+
+  /// Token de sesión; se envía como `Authorization: Bearer` en cada petición.
+  String? token;
+
+  /// Se llama cuando el servidor rechaza la sesión (caducada o cerrada en otro dispositivo).
+  void Function()? onUnauthorized;
+
+  Map<String, String> get _auth => {if (token != null) 'Authorization': 'Bearer $token'};
 
   /// URL absoluta de una ruta relativa devuelta por la API (imágenes, reportes).
   String url(String path) => path.startsWith('http') ? path : '$baseUrl$path';
@@ -35,6 +43,7 @@ class ApiClient {
     } catch (e) {
       throw ApiException('No se pudo conectar con el servidor ($baseUrl).');
     }
+    if (r.statusCode == 401 && token != null) onUnauthorized?.call();
     if (r.statusCode == 204) return null;
     final body = r.bodyBytes.isEmpty ? null : jsonDecode(utf8.decode(r.bodyBytes));
     if (r.statusCode >= 400) {
@@ -46,11 +55,12 @@ class ApiClient {
   }
 
   Future<dynamic> _get(String path, [Map<String, String>? q]) =>
-      _json(() => _client.get(_uri(path, q)));
+      _json(() => _client.get(_uri(path, q), headers: _auth));
 
   Future<dynamic> _send(String method, String path, [Object? body]) => _json(() {
         final req = http.Request(method, _uri(path))
-          ..headers['Content-Type'] = 'application/json';
+          ..headers['Content-Type'] = 'application/json'
+          ..headers.addAll(_auth);
         if (body != null) req.body = jsonEncode(body);
         return _client.send(req).then(http.Response.fromStream);
       });
@@ -67,6 +77,53 @@ class ApiClient {
 
   /// Licencia, código fuente y datasets del servidor (AGPL-3.0, sección 13).
   Future<Map<String, dynamic>> about() async => await _get('/about') as Map<String, dynamic>;
+
+  // ----------------------------------------------------------------- cuenta
+  Future<({String token, UserProfile user})> _session(Object? body) async {
+    final j = body as Map<String, dynamic>;
+    return (token: j['token'] as String, user: UserProfile.fromJson(j['user'] as Map<String, dynamic>));
+  }
+
+  Future<({String token, UserProfile user})> login(String email, String password) async =>
+      _session(await _send('POST', '/auth/login', {'email': email, 'password': password}));
+
+  Future<({String token, UserProfile user})> register({
+    required String email,
+    required String password,
+    required String name,
+    String role = '',
+    String institution = '',
+    required bool acceptPrivacy,
+  }) async =>
+      _session(await _send('POST', '/auth/register', {
+        'email': email,
+        'password': password,
+        'name': name,
+        'role': role,
+        'institution': institution,
+        'accept_privacy': acceptPrivacy,
+      }));
+
+  Future<void> logout() => _send('POST', '/auth/logout');
+
+  Future<UserProfile> me() async => UserProfile.fromJson(await _get('/auth/me') as Map<String, dynamic>);
+
+  Future<UserProfile> updateMe({String? name, String? role, String? institution}) async =>
+      UserProfile.fromJson(await _send('PATCH', '/auth/me', {
+        'name': ?name,
+        'role': ?role,
+        'institution': ?institution,
+      }) as Map<String, dynamic>);
+
+  Future<void> changePassword(String current, String next) =>
+      _send('POST', '/auth/me/password', {'current_password': current, 'new_password': next});
+
+  /// Borra la cuenta y todos sus datos del servidor (derecho de supresión).
+  Future<void> deleteAccount(String password) => _send('DELETE', '/auth/me', {'password': password});
+
+  /// Enlace de un solo uso (5 min) para descargar todos los datos de la cuenta en JSON.
+  Future<String> exportLink() async =>
+      url((await _send('POST', '/auth/me/export-link') as Map<String, dynamic>)['url'] as String);
 
   Future<Stats> stats() async => Stats.fromJson(await _get('/stats') as Map<String, dynamic>);
 
@@ -94,6 +151,7 @@ class ApiClient {
     double plateDiameterMm = 90,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/analyses'))
+      ..headers.addAll(_auth)
       ..fields.addAll({
         'sample_name': sampleName,
         'plate_diameter_mm': '$plateDiameterMm',

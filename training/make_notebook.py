@@ -16,7 +16,7 @@ Entrena el detector YOLO de Bioyologic con fotos **reales** de placas de Petri d
 | Dataset | Placas | Colonias | Especies | Licencia |
 |---|---|---|---|---|
 | Makrai L. *et al.* (2023) *Scientific Data* 10:497 · [doi:10.6084/m9.figshare.22022540](https://doi.org/10.6084/m9.figshare.22022540) | 369 | 56 865 | 24 (veterinarias) | CC BY 4.0 |
-| *Clinical Dataset of 19 Bacterial Colony Images* · [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864) | 950 | 59 221 | 19 (clínicas) | CC BY 4.0 |
+| Du, J. (2026). *Clinical Dataset of 19 Bacterial Colony Images* · [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864) | 950 | 59 221 | 19 (clínicas) | CC BY 4.0 |
 
 **Cómo usarlo**
 1. `Entorno de ejecución → Cambiar tipo de entorno de ejecución → GPU T4`.

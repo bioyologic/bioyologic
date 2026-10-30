@@ -27,6 +27,12 @@ references:
   - type: dataset
     title: "Clinical Dataset of 19 Bacterial Colony Images"
     authors:
-      - name: "Autores del dataset en Zenodo"
+      - family-names: Du
+        given-names: Jia
+        affiliation: "First Hospital of Jilin University"
+        orcid: "https://orcid.org/0009-0006-3906-7896"
+    year: 2026
+    publisher:
+      name: Zenodo
     doi: 10.5281/zenodo.18256864
     license: CC-BY-4.0

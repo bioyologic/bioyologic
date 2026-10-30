@@ -121,4 +121,28 @@ void main() {
         }, 422)));
     await expectLater(api422.createProject(''), throwsA(isA<ApiException>().having((e) => e.message, 'm', 'Field required')));
   });
+
+  test('ApiClient: sesión con token y aviso cuando caduca', () async {
+    final seen = <String?>[];
+    var expired = 0;
+    late final ApiClient api;
+    api = ApiClient('http://srv', onUnauthorized: () => expired++, client: MockClient((req) async {
+      seen.add(req.headers['authorization']);
+      if (req.url.path == '/auth/login') {
+        return _json({
+          'token': 'tok123',
+          'user': {'id': 1, 'email': 'ana@lab.co', 'name': 'Ana', 'role': '', 'institution': 'PUJ'},
+        }, 200);
+      }
+      return _json({'detail': 'Inicia sesión para continuar'}, 401);
+    }));
+    final s = await api.login('ana@lab.co', 'clave-segura-1');
+    expect(s.token, 'tok123');
+    expect(s.user.institution, 'PUJ');
+    expect(seen.single, isNull);
+    api.token = s.token;
+    await expectLater(api.stats(), throwsA(isA<ApiException>()));
+    expect(seen.last, 'Bearer tok123');
+    expect(expired, 1);
+  });
 }

@@ -16,7 +16,7 @@ Bioyologic usa dos modelos en cadena. El **detector** encuentra cada colonia de 
 Dos datasets públicos anotados por microbiólogos, ambos con licencia CC BY 4.0:
 
 - **Makrai *et al.* (2023)**, *Scientific Data* 10:497, [doi:10.6084/m9.figshare.22022540](https://doi.org/10.6084/m9.figshare.22022540). 369 placas, 56 865 colonias, 24 especies de origen veterinario.
-- ***Clinical Dataset of 19 Bacterial Colony Images***, [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864). 950 placas, 59 221 colonias, 19 especies clínicas.
+- **Du, J. (2026)**, *Clinical Dataset of 19 Bacterial Colony Images*, First Hospital of Jilin University, publicado en Zenodo, [doi:10.5281/zenodo.18256864](https://doi.org/10.5281/zenodo.18256864). 950 placas, 59 221 colonias, 19 especies clínicas.
 
 Los datos se separan **por placa** (80 % entrenamiento, 10 % validación, 10 % test), así que ninguna foto de test se vio al entrenar. Las especies de ambos datasets se unificaron por nombre en 37 especies (`training/species_map.json`).
 

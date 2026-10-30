@@ -191,3 +191,19 @@ class SpeciesPrediction {
   final bool identified;
   final List<SpeciesCandidate> top;
 }
+
+/// Cuenta del usuario en el servidor.
+class UserProfile {
+  UserProfile.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        email = j['email'] as String,
+        name = j['name'] as String,
+        role = (j['role'] as String?) ?? '',
+        institution = (j['institution'] as String?) ?? '';
+
+  final int id;
+  final String email;
+  final String name;
+  final String role;
+  final String institution;
+}
