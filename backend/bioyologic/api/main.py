@@ -121,11 +121,17 @@ def get_species() -> SpeciesClassifier | None:
     return SpeciesClassifier(weights)
 
 
-def classify_species(img: np.ndarray, dets: list[Detection], clf: SpeciesClassifier | None):
-    """Pone la especie en cada detección y devuelve la especie de la placa (o None)."""
+def classify_species(img: np.ndarray, dets: list[Detection], clf: SpeciesClassifier | None,
+                     reliable: bool = True):
+    """Pone la especie en cada detección y devuelve la especie de la placa (o None).
+
+    Con `reliable=False` (foto de poca resolución) las colonias quedan sin especie y la placa se da por no
+    identificada: se muestran las candidatas, pero no se afirma ninguna."""
     if clf is None or not dets:
         return dets, None
     res = clf.classify(img, [(d.x1, d.y1, d.x2, d.y2) for d in dets])
+    if not reliable:
+        return dets, {"identified": False, "top": res.plate, "reason": "low_resolution"}
     ids = {n: i for i, n in clf.names.items()}
     out = [Detection(d.x1, d.y1, d.x2, d.y2, d.confidence, ids[name], name, prob)
            for d, (name, prob) in zip(dets, res.per_colony)]
@@ -537,10 +543,12 @@ async def create_analysis(
         raise HTTPException(400, "No se pudo leer la imagen")
 
     scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
-    dets, species = classify_species(img, detector.detect(img), species_clf)
+    quality = assess(img)
+    baja_resolucion = any(i["code"] == "low_resolution" for i in quality["issues"])
+    dets, species = classify_species(img, detector.detect(img), species_clf, reliable=not baja_resolucion)
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
-    result["quality"] = assess(img)
+    result["quality"] = quality
     saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
                                original=img, annotated=annotated, project_id=project_id,
                                dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)

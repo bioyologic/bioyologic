@@ -1,4 +1,5 @@
-"""Control de calidad de la foto: borrosa, oscura, con reflejos, placa descentrada o muy lejos.
+"""Control de calidad de la foto: borrosa, oscura, con reflejos, placa descentrada, muy lejos o con poca
+resolución.
 
 Los umbrales se calibraron con fotos reales de los dos datasets (Makrai et al. 2023; Du 2026) y con
 versiones estropeadas a propósito: hay un margen amplio entre las fotos buenas y las malas, para no dar
@@ -15,6 +16,10 @@ BRILLO_MIN = 65        # brillo medio (canal V) de la placa (buenas: 93-234; osc
 REFLEJO_MAX = 0.006    # fracción de la placa con brillo saturado y sin color (buenas: < 0,3 %; con reflejo: > 1 %)
 DESCENTRADA_MAX = 0.15  # distancia del centro de la placa al de la foto, en lados cortos (buenas: < 0,05)
 TAMANO_MIN = 0.55      # diámetro de la placa / lado corto de la foto (buenas: > 0,8)
+# Diámetro de la placa en píxeles de la foto original. Por debajo, el conteo sigue bien pero el clasificador de
+# especie falla: la misma placa de E. coli se identifica bien con 990 px o más (fotos de 1600 px de ancho) y se
+# confunde con otra especie con 790 px (1280 × 960, la resolución «alta» de la cámara del celular).
+PLACA_PX_MIN = 950
 
 
 def _reducir(img: np.ndarray, lado: int = 1024) -> np.ndarray:
@@ -49,6 +54,7 @@ def _donde(dx: float, dy: float) -> str:
 def assess(image: np.ndarray) -> dict:
     """{"ok", "issues": [{"code", "message"}], "metrics": {...}} sobre una foto BGR."""
     img = _reducir(image)
+    escala = max(image.shape[:2]) / max(img.shape[:2])  # píxeles originales por píxel analizado
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h, w = gray.shape
@@ -67,7 +73,15 @@ def assess(image: np.ndarray) -> dict:
     metrics = {"sharpness": round(nitidez, 2), "brightness": round(brillo, 1), "glare": round(reflejo, 4),
                "plate_found": placa is not None}
 
+    placa_px = float(2 * placa[2] if placa else min(h, w)) * escala
+    metrics["plate_px"] = round(placa_px)
+
     issues = []
+    if placa_px < PLACA_PX_MIN:
+        issues.append({"code": "low_resolution",
+                       "message": f"La foto tiene poca resolución (la placa mide unos {round(placa_px)} píxeles): la "
+                                  "especie no es fiable y se pueden perder colonias muy pequeñas. Pon la cámara en "
+                                  "resolución Máxima (en Perfil, Configuración) o acércate a la placa."})
     if placa is None:
         issues.append({"code": "no_plate", "message": "No se distingue bien el borde de la placa. Centra la placa "
                                                       "completa en la foto, sobre un fondo oscuro."})

@@ -32,7 +32,7 @@ class SettingsScreen extends StatelessWidget {
                 icon: Icons.high_quality_outlined,
                 title: 'Resolución',
                 value: s.resolution,
-                options: const {'media': 'Media', 'alta': 'Alta', 'maxima': 'Máxima'},
+                options: const {'media': 'Media (1080p)', 'alta': 'Alta (4K)', 'maxima': 'Máxima (recomendada)'},
                 onChanged: (v) => s.resolution = v,
               ),
               const Divider(),

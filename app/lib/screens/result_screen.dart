@@ -441,6 +441,12 @@ class _SpeciesCard extends StatelessWidget {
               Text('Probabilidad ${(best.prob * 100).round()} % · votación de $total colonias',
                   style: const TextStyle(color: ink, fontSize: 12.5)),
               if (facts.isNotEmpty) Text(facts, style: const TextStyle(color: ink, fontSize: 12)),
+              if (sp.reason == 'low_resolution')
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text('La foto tiene poca resolución: con ella el modelo confunde las especies. Usa la '
+                      'cámara en resolución Máxima.', style: TextStyle(color: ink, fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
             ]),
           ),
         ]),

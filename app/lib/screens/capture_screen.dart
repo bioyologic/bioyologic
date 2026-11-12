@@ -38,10 +38,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
     _initCameras();
   }
 
+  // «high» del paquete de cámara es solo 720p: con esa resolución el clasificador de especie falla, así que
+  // por defecto se usa la máxima del celular. Alta = 4K; Media = 1080p (más liviana, especie menos fiable).
   ResolutionPreset get _preset => switch (AppScope.read(context).resolution) {
-        'media' => ResolutionPreset.medium,
-        'maxima' => ResolutionPreset.max,
-        _ => ResolutionPreset.high,
+        'media' => ResolutionPreset.veryHigh,
+        'alta' => ResolutionPreset.ultraHigh,
+        _ => ResolutionPreset.max,
       };
 
   Future<void> _initCameras() async {

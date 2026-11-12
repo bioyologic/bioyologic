@@ -190,7 +190,7 @@ class AppState extends ChangeNotifier {
   bool get saveOriginal => _flag('save_original', true);
   set saveOriginal(bool v) => _setFlag('save_original', v);
 
-  String get resolution => _prefs.getString('resolution') ?? 'alta';
+  String get resolution => _prefs.getString('resolution') ?? 'maxima';
   set resolution(String v) {
     _prefs.setString('resolution', v);
     notifyListeners();

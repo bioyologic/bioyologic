@@ -281,9 +281,13 @@ class SpeciesCandidate {
 class SpeciesPrediction {
   SpeciesPrediction.fromJson(Map<String, dynamic> j)
       : identified = j['identified'] as bool,
+        reason = j['reason'] as String?,
         top = (j['top'] as List).map((e) => SpeciesCandidate.fromJson(e as Map<String, dynamic>)).toList();
 
   final bool identified;
+
+  /// Por qué no se afirma la especie (p. ej. 'low_resolution': la foto tiene poca resolución).
+  final String? reason;
   final List<SpeciesCandidate> top;
 }
 

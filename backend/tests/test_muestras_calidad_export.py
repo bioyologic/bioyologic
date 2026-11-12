@@ -118,3 +118,31 @@ def test_delete_many_only_own_analyses(ctx, tmp_path):
     assert {x["id"] for x in client.get("/trash").json()} == {ids[0], ids[1]}  # van a la papelera
     assert otro.get(f"/analyses/{ajeno}").status_code == 200
     assert client.post("/analyses/delete", json={"ids": []}).status_code == 422
+
+
+# ------------------------------------------------------------------ poca resolución
+def test_low_resolution_warning(monkeypatch):
+    from bioyologic.analysis import quality
+    monkeypatch.setattr(quality, "PLACA_PX_MIN", 950)
+    pequena, _ = draw_plate(700, 40, seed=8)  # como una foto de 1280 × 720 de la cámara
+    q = assess(pequena)
+    assert [i["code"] for i in q["issues"]] == ["low_resolution"] and q["metrics"]["plate_px"] < 950
+    grande, _ = draw_plate(1600, 40, seed=8)
+    assert assess(grande)["ok"] is True
+
+
+def test_species_not_claimed_on_low_resolution(ctx, monkeypatch):
+    """Con poca resolución el clasificador de especie se equivoca: se muestran candidatas sin afirmar ninguna."""
+    from bioyologic.analysis import quality
+    from bioyologic.api.main import app, get_species
+    from .test_api import FakeSpecies
+    monkeypatch.setattr(quality, "PLACA_PX_MIN", 950)
+    client, jpg, labels = ctx
+    app.dependency_overrides[get_species] = lambda: FakeSpecies()
+    a = _upload(client, jpg).json()
+    assert a["species"]["identified"] is False and a["species"]["reason"] == "low_resolution"
+    assert a["species"]["top"][0]["name"] == "Escherichia coli"
+    # Las colonias no reciben la especie del clasificador
+    assert not {"Escherichia coli", "Staphylococcus aureus"} & set(a["summary"]["by_class"])
+    assert a["summary"]["total"] == len(labels)  # el conteo no cambia
+    assert "low_resolution" in {i["code"] for i in a["quality"]["issues"]}

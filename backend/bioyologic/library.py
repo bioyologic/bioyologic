@@ -547,6 +547,9 @@ OTRAS: list[dict] = [
              "una placa de 30 colonias se contó como 33). Evita la luz directa o corrige el conteo."],
             ["Descentrada o lejos", "La placa no está centrada o se ve pequeña: la escala en mm deja de ser "
              "exacta y se pierden detalles. Ajusta la placa al círculo guía."],
+            ["Poca resolución", "La placa ocupa menos de unos 950 píxeles de la foto. El conteo suele seguir bien, "
+             "pero el clasificador de especie se equivoca, así que la app muestra candidatas sin afirmar ninguna. "
+             "Pon la cámara en resolución Máxima (en Perfil, Configuración) y encaja la placa en el círculo guía."],
             ["No se distingue la placa", "La app no encuentra el borde: revisa el encuadre y el fondo."],
             ["Qué hacer", "El conteo se hace igual, pero si hay avisos lo mejor es repetir la foto. Si no puedes, "
              "revisa las colonias marcadas y usa «Corregir conteo»."],
