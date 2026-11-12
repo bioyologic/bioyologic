@@ -80,7 +80,7 @@ def assess(image: np.ndarray) -> dict:
     if placa_px < PLACA_PX_MIN:
         issues.append({"code": "low_resolution",
                        "message": f"La foto tiene poca resolución (la placa mide unos {round(placa_px)} píxeles): la "
-                                  "especie no es fiable y se pueden perder colonias muy pequeñas. Pon la cámara en "
+                                  "especie puede fallar y se pueden perder colonias muy pequeñas. Pon la cámara en "
                                   "resolución Máxima (en Perfil, Configuración) o acércate a la placa."})
     if placa is None:
         issues.append({"code": "no_plate", "message": "No se distingue bien el borde de la placa. Centra la placa "

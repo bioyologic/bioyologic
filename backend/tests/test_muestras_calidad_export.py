@@ -146,3 +146,27 @@ def test_species_not_claimed_on_low_resolution(ctx, monkeypatch):
     assert not {"Escherichia coli", "Staphylococcus aureus"} & set(a["summary"]["by_class"])
     assert a["summary"]["total"] == len(labels)  # el conteo no cambia
     assert "low_resolution" in {i["code"] for i in a["quality"]["issues"]}
+
+
+def test_low_resolution_species_needs_high_probability(ctx, monkeypatch):
+    """Con poca resolución la foto se amplía para clasificar; la especie solo se afirma si es muy probable."""
+    from bioyologic.analysis import quality
+    from bioyologic.api.main import app, get_species
+    from bioyologic.detection.species import SpeciesResult
+    monkeypatch.setattr(quality, "PLACA_PX_MIN", 950)
+    vistos = []
+
+    class Seguro:
+        names = {0: "Escherichia coli"}
+
+        def classify(self, image, boxes):
+            vistos.append(image.shape[1])
+            return SpeciesResult([("Escherichia coli", 0.97)] * len(boxes),
+                                 [{"name": "Escherichia coli", "prob": 0.95, "gram": "-", "agar": "blood"}], True)
+
+    client, jpg, labels = ctx
+    app.dependency_overrides[get_species] = lambda: Seguro()
+    a = _upload(client, jpg).json()
+    assert a["species"]["identified"] is True and "reason" not in a["species"]
+    assert a["summary"]["by_class"] == {"Escherichia coli": len(labels)}
+    assert vistos[0] > 600  # se clasificó sobre la foto ampliada (la original mide 600 px)

@@ -53,6 +53,7 @@ from pydantic import BaseModel, Field
 from .. import __version__, mailer
 from ..analysis.counting import combine_plates
 from ..analysis.pipeline import analyze, recount
+from ..analysis import quality as quality_mod
 from ..analysis.quality import assess
 from ..export import build_csv
 from ..detection.detector import ColonyDetector, Detection
@@ -121,16 +122,33 @@ def get_species() -> SpeciesClassifier | None:
     return SpeciesClassifier(weights)
 
 
+# Fotos de poca resolución (placa < AMPLIAR_DESDE_PX píxeles): se amplían para clasificar las colonias, porque el
+# clasificador se entrenó con fotos de 2300-4000 px. En pruebas con placas reales reducidas a 960-1280 px, la
+# especie volvió a salir bien (87-100 %) si la foto no estaba muy comprimida; con compresión fuerte (como la de
+# las apps de mensajería) daba especies equivocadas con 40-83 %. Por eso, si la placa queda por debajo de
+# PLACA_PX_MIN (aviso de poca resolución), solo se afirma la especie con una probabilidad muy alta.
+AMPLIAR_DESDE_PX = 1500   # por debajo de este diámetro de placa la especie empieza a perder seguridad
+AMPLIAR_A_PX = 2400
+PROB_MIN_BAJA_RESOLUCION = 0.90
+
+
 def classify_species(img: np.ndarray, dets: list[Detection], clf: SpeciesClassifier | None,
-                     reliable: bool = True):
+                     plate_px: float | None = None):
     """Pone la especie en cada detección y devuelve la especie de la placa (o None).
 
-    Con `reliable=False` (foto de poca resolución) las colonias quedan sin especie y la placa se da por no
-    identificada: se muestran las candidatas, pero no se afirma ninguna."""
+    `plate_px`: diámetro de la placa en píxeles (del control de calidad). Si la foto tiene poca resolución se
+    amplía para clasificar y, si aun así la especie no es muy probable, las colonias quedan sin especie y la
+    placa se da por no identificada: se muestran las candidatas, pero no se afirma ninguna."""
     if clf is None or not dets:
         return dets, None
-    res = clf.classify(img, [(d.x1, d.y1, d.x2, d.y2) for d in dets])
-    if not reliable:
+    boxes = [(d.x1, d.y1, d.x2, d.y2) for d in dets]
+    baja = plate_px is not None and plate_px < quality_mod.PLACA_PX_MIN
+    if plate_px is not None and plate_px < AMPLIAR_DESDE_PX:
+        f = min(3.0, AMPLIAR_A_PX / max(plate_px, 1.0))
+        img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_LANCZOS4)
+        boxes = [tuple(v * f for v in b) for b in boxes]
+    res = clf.classify(img, boxes)
+    if baja and not (res.identified and res.plate[0]["prob"] >= PROB_MIN_BAJA_RESOLUCION):
         return dets, {"identified": False, "top": res.plate, "reason": "low_resolution"}
     ids = {n: i for i, n in clf.names.items()}
     out = [Detection(d.x1, d.y1, d.x2, d.y2, d.confidence, ids[name], name, prob)
@@ -544,8 +562,7 @@ async def create_analysis(
 
     scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
     quality = assess(img)
-    baja_resolucion = any(i["code"] == "low_resolution" for i in quality["issues"])
-    dets, species = classify_species(img, detector.detect(img), species_clf, reliable=not baja_resolucion)
+    dets, species = classify_species(img, detector.detect(img), species_clf, quality["metrics"].get("plate_px"))
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
     result["quality"] = quality
