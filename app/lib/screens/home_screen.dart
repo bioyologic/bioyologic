@@ -2,13 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../state/app_state.dart';
-import '../state/reminders.dart';
 import '../theme.dart';
 import '../widgets/analysis_tile.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'capture_screen.dart';
-import 'incubations_screen.dart';
 import 'library_screen.dart';
 import 'shell.dart';
 import 'team_screen.dart';
@@ -22,21 +20,15 @@ class HomeScreen extends StatelessWidget {
     final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Scaffold(
       body: SafeArea(
-        child: Loader<(List<Analysis>, Stats, List<Incubation>, List<Analysis>)>(
-          load: () async {
-            // Siembras y revisiones son opcionales: si el servidor aún no las tiene, el inicio carga igual.
-            final incubations = await state.api.incubations().catchError((_) => <Incubation>[]);
-            await Reminders.sync(incubations);
-            return (
-              await state.api.analyses(limit: 5),
-              await state.api.stats(),
-              incubations,
-              await state.api.analyses(toReview: true, limit: 50).catchError((_) => <Analysis>[]),
-            );
-          },
+        child: Loader<(List<Analysis>, Stats, List<Analysis>)>(
+          load: () async => (
+            await state.api.analyses(limit: 5),
+            await state.api.stats(),
+            // La cola de revisión es opcional: si el servidor aún no la tiene, el inicio carga igual.
+            await state.api.analyses(toReview: true, limit: 50).catchError((_) => <Analysis>[]),
+          ),
           builder: (context, data, reload) {
-            final (recent, stats, incubations, toReview) = data;
-            final ready = incubations.where((i) => i.isReady()).toList();
+            final (recent, stats, toReview) = data;
             return RefreshIndicator(
               onRefresh: reload,
               child: ListView(
@@ -53,8 +45,8 @@ class HomeScreen extends StatelessWidget {
                     ),
                     IconButton.outlined(
                       tooltip: 'Notificaciones',
-                      onPressed: () => _showNotifications(context, recent, ready, toReview.length),
-                      icon: Badge(isLabelVisible: ready.isNotEmpty || toReview.isNotEmpty, smallSize: 8,
+                      onPressed: () => _showNotifications(context, recent, toReview.length),
+                      icon: Badge(isLabelVisible: recent.isNotEmpty || toReview.isNotEmpty, smallSize: 8,
                           child: const Icon(Icons.notifications_none)),
                     ),
                   ]),
@@ -69,9 +61,7 @@ class HomeScreen extends StatelessWidget {
                         onTap: () => Navigator.of(context)
                             .push(MaterialPageRoute(builder: (_) => const LibraryScreen()))),
                     const SizedBox(width: 10),
-                    _Action(Icons.timer_outlined, 'Incubación',
-                        onTap: () => Navigator.of(context)
-                            .push(MaterialPageRoute(builder: (_) => const IncubationsScreen()))),
+                    _Action(Icons.history, 'Historial', onTap: () => Shell.goTo(context, 1)),
                   ]),
                   const SizedBox(height: 20),
                   _StatsBanner(stats),
@@ -90,15 +80,6 @@ class HomeScreen extends StatelessWidget {
                             .push(MaterialPageRoute(builder: (_) => const ReviewQueueScreen())),
                       ),
                     ),
-                  if (incubations.isNotEmpty) ...[
-                    SectionHeader('En incubación', action: 'Ver todo', onAction: () => Navigator.of(context)
-                        .push(MaterialPageRoute(builder: (_) => const IncubationsScreen()))),
-                    for (final i in incubations.take(2))
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: IncubationCard(i, compact: true, onChanged: reload),
-                      ),
-                  ],
                   SectionHeader('Últimos análisis', action: 'Ver todo', onAction: () => Shell.goTo(context, 1)),
                   if (recent.isEmpty)
                     EmptyState(
@@ -123,7 +104,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  void _showNotifications(BuildContext context, List<Analysis> recent, List<Incubation> ready, int toReview) {
+  void _showNotifications(BuildContext context, List<Analysis> recent, int toReview) {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -133,22 +114,7 @@ class HomeScreen extends StatelessWidget {
         children: [
           const Text('Notificaciones', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          if (recent.isEmpty && ready.isEmpty && toReview == 0)
-            const ListTile(title: Text('No tienes notificaciones')),
-          for (final i in ready)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(
-                backgroundColor: Bio.ok.withValues(alpha: 0.12),
-                child: const Icon(Icons.notifications_active_outlined, color: Bio.ok),
-              ),
-              title: Text(Reminders.message(i)),
-              subtitle: Text('Lista desde ${friendlyDate(i.readyAt).toLowerCase()}'),
-              onTap: () {
-                Navigator.pop(context);
-                CaptureScreen.open(context, incubation: i);
-              },
-            ),
+          if (recent.isEmpty && toReview == 0) const ListTile(title: Text('No tienes notificaciones')),
           if (toReview > 0)
             ListTile(
               contentPadding: EdgeInsets.zero,

@@ -1,9 +1,7 @@
 import 'package:bioyologic/api/models.dart';
-import 'package:bioyologic/screens/incubations_screen.dart';
 import 'package:bioyologic/screens/team_screen.dart';
 import 'package:bioyologic/screens/tutorial_screen.dart';
 import 'package:bioyologic/state/app_state.dart';
-import 'package:bioyologic/state/reminders.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -30,16 +28,6 @@ Map<String, dynamic> _analisis({Map<String, dynamic>? review, bool mine = false,
       'review': review,
     };
 
-Incubation _siembra(DateTime seeded, double hours) => Incubation.fromJson({
-      'id': 1,
-      'name': 'Agua de río',
-      'seeded_at': seeded.toUtc().toIso8601String(),
-      'ready_at': seeded.add(Duration(minutes: (hours * 60).round())).toUtc().toIso8601String(),
-      'hours': hours,
-      'temperature_c': 37,
-      'analyses_count': 0,
-    });
-
 Future<void> _pump(WidgetTester tester, Widget child) async {
   SharedPreferences.setMockInitialValues({'server_url': 'http://srv'});
   final state = await AppState.load();
@@ -49,7 +37,7 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
 void main() {
   setUpAll(() => initializeDateFormatting('es'));
 
-  test('Modelos: revisión, permisos y siembra', () {
+  test('Modelos: revisión y permisos', () {
     final a = Analysis.fromJson(_analisis(review: {'status': 'pendiente'}));
     expect(a.review!.pending, isTrue);
     expect(a.isMine, isFalse);
@@ -57,12 +45,6 @@ void main() {
     final viejo = Analysis.fromJson(_analisis()..remove('is_mine')..remove('can_review'));
     expect(viejo.isMine, isTrue);
     expect(viejo.canReview, isFalse);
-
-    final i = _siembra(DateTime.now().subtract(const Duration(hours: 25)), 24);
-    expect(i.isReady(), isTrue);
-    expect(incubationLabel(i), '24 h a 37 °C');
-    expect(Reminders.message(i), 'Tus placas de Agua de río están listas para leer (24 h).');
-    expect(durationLabel(const Duration(hours: 5, minutes: 7)), '5 h 07 min');
   });
 
   testWidgets('Revisor ve Aprobar y Devolver en un análisis pendiente', (tester) async {
@@ -84,18 +66,6 @@ void main() {
             onChanged: () async {}));
     expect(find.text('Aprobado por Carla Gómez'), findsOneWidget);
     expect(find.text('Aprobar'), findsNothing);
-  });
-
-  testWidgets('Siembra lista muestra Analizar placa; una en curso, el tiempo que falta', (tester) async {
-    await _pump(
-        tester,
-        ListView(children: [
-          IncubationCard(_siembra(DateTime.now().subtract(const Duration(hours: 25)), 24), onChanged: () async {}),
-          IncubationCard(_siembra(DateTime.now().subtract(const Duration(hours: 1)), 48), onChanged: () async {}),
-        ]));
-    expect(find.textContaining('Lista para leer'), findsOneWidget);
-    expect(find.text('Analizar placa'), findsOneWidget);
-    expect(find.textContaining('Faltan 46 h'), findsOneWidget);
   });
 
   testWidgets('Tutorial: tres pantallas y termina con Empezar', (tester) async {

@@ -37,7 +37,6 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
@@ -518,7 +517,6 @@ async def create_analysis(
     plate_diameter_mm: float = Form(90.0, gt=0),
     notes: str = Form(""),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
-    incubation_id: int | None = Form(None, description="Siembra en incubación de la que sale la placa"),
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
     species_clf: SpeciesClassifier | None = Depends(get_species),
@@ -531,9 +529,6 @@ async def create_analysis(
         raise HTTPException(422, "El volumen debe ser > 0")
     if project_id is not None:
         _require(store.get_project(project_id, user["id"]), "Proyecto")
-    incubation = None
-    if incubation_id is not None:
-        incubation = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
     data = await image.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"Imagen demasiado grande (máx. {MAX_UPLOAD_MB:g} MB)")
@@ -546,13 +541,9 @@ async def create_analysis(
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
     result["quality"] = assess(img)
-    if incubation is not None:
-        # Copia en el resultado: el informe la conserva aunque luego se borre la siembra.
-        result["incubation"] = _incubation_record(incubation)
     saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
                                original=img, annotated=annotated, project_id=project_id,
-                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group,
-                               incubation_id=incubation_id)
+                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)
     return _out(store, saved, user)
 
 
@@ -911,92 +902,6 @@ def remove_member(project_id: int, member_id: int, store: Store = Depends(get_st
     if member_id != user["id"]:
         _owner_only(p)
     _require(store.remove_member(project_id, member_id) or None, "Miembro")
-    return Response(status_code=204)
-
-
-# --------------------------------------------------------------------- siembras en incubación
-class IncubationIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=120)
-    hours: float = Field(..., gt=0, le=24 * 14)
-    temperature_c: float | None = Field(None, ge=0, le=80)
-    seeded_at: datetime | None = Field(None, description="Hora de la siembra (por defecto, ahora)")
-    project_id: int | None = None
-    sample_group: str = Field("", max_length=120)
-    plates: int | None = Field(None, ge=1, le=500)
-    notes: str = Field("", max_length=1000)
-
-
-class IncubationPatch(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=120)
-    hours: float | None = Field(None, gt=0, le=24 * 14)
-    temperature_c: float | None = Field(None, ge=0, le=80)
-    plates: int | None = Field(None, ge=1, le=500)
-    notes: str | None = Field(None, max_length=1000)
-    done: bool | None = Field(None, description="true = ya se leyeron las placas")
-
-
-def _ready_at(i: dict) -> datetime:
-    return datetime.fromisoformat(i["seeded_at"]) + timedelta(hours=i["hours"])
-
-
-def _incubation_out(i: dict, user: dict) -> dict:
-    i = dict(i)
-    i["is_mine"] = i.pop("user_id") == user["id"]
-    i["ready_at"] = _ready_at(i).isoformat(timespec="seconds")
-    return i
-
-
-def _incubation_record(i: dict) -> dict:
-    """Lo que el análisis guarda de su siembra: horas reales de incubación al tomar la foto."""
-    leida = (datetime.now().astimezone() - datetime.fromisoformat(i["seeded_at"])).total_seconds() / 3600
-    return {"name": i["name"], "seeded_at": i["seeded_at"], "hours": i["hours"],
-            "temperature_c": i["temperature_c"], "read_after_hours": round(leida, 1)}
-
-
-def _aware(dt: datetime) -> str:
-    """Fecha ISO con zona horaria (si la app la manda sin zona, se toma la del servidor)."""
-    return (dt if dt.tzinfo else dt.astimezone()).isoformat(timespec="seconds")
-
-
-@app.get("/incubations")
-def list_incubations(include_done: bool = False, store: Store = Depends(get_store),
-                     user: dict = Depends(verified_user)) -> list[dict]:
-    """Siembras por leer (propias y de proyectos compartidos), de la que se lee primero a la última."""
-    return [_incubation_out(i, user) for i in store.list_incubations(user["id"], include_done)]
-
-
-@app.post("/incubations", status_code=201)
-def create_incubation(body: IncubationIn, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> dict:
-    """Registra una siembra: la app avisa cuando las placas estén listas para leer."""
-    if body.project_id is not None:
-        _require(store.get_project(body.project_id, user["id"]), "Proyecto")
-    i = store.create_incubation(
-        user["id"], name=body.name.strip(), hours=body.hours, temperature_c=body.temperature_c,
-        seeded_at=_aware(body.seeded_at) if body.seeded_at else None, project_id=body.project_id,
-        sample_group=body.sample_group, plates=body.plates, notes=body.notes.strip())
-    return _incubation_out(i, user)
-
-
-@app.patch("/incubations/{incubation_id}")
-def update_incubation(incubation_id: int, body: IncubationPatch, store: Store = Depends(get_store),
-                      user: dict = Depends(verified_user)) -> dict:
-    """Cualquier miembro puede marcarla como leída; los demás cambios, solo quien la creó."""
-    i = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
-    fields = body.model_dump(exclude_unset=True)
-    done = fields.pop("done", None)
-    if fields and i["user_id"] != user["id"]:
-        raise HTTPException(403, "Solo quien registró la siembra puede cambiarla")
-    if done is not None:
-        fields["done_at"] = datetime.now().astimezone().isoformat(timespec="seconds") if done else None
-    return _incubation_out(store.update_incubation(incubation_id, user["id"], **fields), user)
-
-
-@app.delete("/incubations/{incubation_id}", status_code=204)
-def delete_incubation(incubation_id: int, store: Store = Depends(get_store), user: dict = Depends(verified_user)) -> Response:
-    i = _require(store.get_incubation(incubation_id, user["id"]), "Siembra")
-    if i["user_id"] != user["id"]:
-        raise HTTPException(403, "Solo quien registró la siembra puede borrarla")
-    store.delete_incubation(incubation_id, user["id"])
     return Response(status_code=204)
 
 

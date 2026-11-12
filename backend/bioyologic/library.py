@@ -466,8 +466,6 @@ OTRAS: list[dict] = [
              "• Coliformes (ISO 4832): 30 o 37 °C, 24 h.\n• E. coli β-glucuronidasa positiva (ISO 16649-2): "
              "44 °C, 18–24 h.\n• Mohos y levaduras (ISO 21527): 25 °C, 5 días.\n• Cultivos clínicos de rutina: "
              "35–37 °C, 18–48 h.\nSigue siempre el método que indique tu protocolo o la norma aplicable."],
-            ["En Bioyologic", "Registra la siembra en Inicio → Incubación: la app te avisa cuando las placas estén "
-             "listas y guarda en el informe cuántas horas incubaron de verdad."],
         ],
     },
     {
@@ -510,10 +508,9 @@ OTRAS: list[dict] = [
         "sections": [
             ["1. Antes de sembrar", "Crea un proyecto para el experimento (p. ej. «Agua del río, octubre») y, si "
              "trabajas en equipo, invita a tus compañeros desde el ícono de equipo."],
-            ["2. Siembra", "Prepara las diluciones y siembra en superficie. Registra la siembra en Inicio → "
-             "Incubación con las horas y la temperatura."],
-            ["3. Lectura", "Cuando la app avise, abre la tarjeta de la siembra y toca «Analizar placa». Toma la "
-             "foto dentro de la caja de iluminación."],
+            ["2. Siembra", "Prepara las diluciones y siembra en superficie (ver Protocolos). Incuba el tiempo y a "
+             "la temperatura que indique tu método."],
+            ["3. Lectura", "Toca el botón + y toma la foto de la placa cerrada dentro de la caja de iluminación."],
             ["4. Datos", "Indica la dilución, el volumen y el nombre de la muestra (el mismo en todas sus placas)."],
             ["5. Revisión", "Lee los avisos de calidad, revisa las colonias marcadas y corrige el conteo si hace "
              "falta. En equipo, un revisor aprueba o devuelve el análisis."],

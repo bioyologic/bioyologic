@@ -3,6 +3,7 @@ import 'package:bioyologic/state/app_state.dart';
 import 'package:bioyologic/widgets/analysis_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Analysis _analisis(int id, String nombre) => Analysis.fromJson({
@@ -23,6 +24,8 @@ Analysis _analisis(int id, String nombre) => Analysis.fromJson({
     });
 
 void main() {
+  setUpAll(() => initializeDateFormatting('es'));
+
   testWidgets('Deslizar un análisis pide confirmación y Cancelar lo conserva', (tester) async {
     SharedPreferences.setMockInitialValues({'server_url': 'http://srv'});
     final state = await AppState.load();

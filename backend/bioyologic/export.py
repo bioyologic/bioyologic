@@ -15,7 +15,7 @@ COLUMNAS = [
     "Corrección manual", "Estado", "UFC/mL de la placa", "UFC/mL de la muestra (ISO 4833)", "UFC/mL de la muestra estimado",
     "Especie probable", "Probabilidad de la especie (%)", "Diámetro medio", "Unidad del diámetro", "Forma predominante",
     "Borde predominante", "Color predominante", "Avisos de calidad de la foto", "Notas",
-    "Analizado por", "Revisión", "Revisado por", "Horas de incubación",
+    "Analizado por", "Revisión", "Revisado por",
 ]
 REVISION = {"aprobado": "Aprobado", "devuelto": "Devuelto", "pendiente": "Pendiente"}
 ESTADO = {"contable": "Contable (30-300)", "pocas": "Pocas colonias (<30)", "incontable": "Incontable (>300)"}
@@ -66,6 +66,6 @@ def build_csv(analyses: list[dict], samples: dict[tuple, dict]) -> bytes:
             pred.get("form") or "", pred.get("margin") or "", pred.get("color") or "", calidad,
             (a.get("notes") or "").replace("\r", " ").replace("\n", " "),
             a.get("author_name") or "", REVISION.get((a.get("review") or {}).get("status"), ""),
-            (a.get("review") or {}).get("by") or "", _n((a.get("incubation") or {}).get("read_after_hours"), 1),
+            (a.get("review") or {}).get("by") or "",
         ])
     return ("﻿" + buf.getvalue()).encode("utf-8")

@@ -15,7 +15,6 @@ El equipo del proyecto Bioyologic (Pontificia Universidad Javeriana), que admini
 | **Cuenta:** nombre, correo, profesión o rol, institución y fecha en que aceptaste esta política | Identificarte y mantener tus datos separados de los de otras personas |
 | **Contraseña** | Iniciar sesión. Se guarda cifrada (scrypt): nadie, ni siquiera el equipo, puede leerla |
 | **Fotos de placas de Petri** y datos de cada muestra (nombre, muestra, proyecto, dilución, volumen, notas, resultados y correcciones) | Calcular los resultados y guardar tu historial, tus proyectos y tus informes |
-| **Siembras en incubación** (qué sembraste, cuándo, horas y temperatura) | Avisarte cuando las placas estén listas y registrar las horas reales de incubación en el informe |
 | **Revisiones** en proyectos compartidos (quién aprobó o devolvió un análisis, cuándo y su nota) | Trazabilidad del trabajo en equipo |
 | **Preferencias** (tema, cámara, servidor) | Configurar la app. Se quedan en tu teléfono |
 
@@ -33,7 +32,7 @@ Puedes conocer, actualizar, rectificar y suprimir tus datos, y revocar esta auto
 
 - **Perfil → Mi perfil:** actualizar tus datos.
 - **Perfil → Descargar mis datos:** copia completa de todo lo que el servidor guarda de ti.
-- **Perfil → Eliminar mi cuenta:** borra del servidor la cuenta y todos sus análisis, proyectos, siembras y fotos. En las revisiones que hiciste en proyectos ajenos, tu nombre se reemplaza por «Cuenta eliminada».
+- **Perfil → Eliminar mi cuenta:** borra del servidor la cuenta y todos sus análisis, proyectos y fotos. En las revisiones que hiciste en proyectos ajenos, tu nombre se reemplaza por «Cuenta eliminada».
 - **Proyecto → Equipo → Salir del proyecto:** dejas de ver un proyecto compartido cuando quieras.
 
 ## Conservación

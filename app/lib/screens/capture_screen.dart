@@ -4,7 +4,6 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../api/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import 'new_analysis_screen.dart';
@@ -14,17 +13,12 @@ const guideFraction = 0.80;
 
 /// Cámara con círculo guía para encuadrar la placa.
 class CaptureScreen extends StatefulWidget {
-  const CaptureScreen({super.key, this.projectId, this.incubation});
+  const CaptureScreen({super.key, this.projectId});
 
   final int? projectId;
 
-  /// Siembra de la que sale la placa (se registran sus horas de incubación).
-  final Incubation? incubation;
-
-  static Future<void> open(BuildContext context, {int? projectId, Incubation? incubation}) =>
-      Navigator.of(context).push(MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => CaptureScreen(projectId: projectId ?? incubation?.projectId, incubation: incubation)));
+  static Future<void> open(BuildContext context, {int? projectId}) => Navigator.of(context).push(
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => CaptureScreen(projectId: projectId)));
 
   @override
   State<CaptureScreen> createState() => _CaptureScreenState();
@@ -140,7 +134,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
         plateFraction: plateFraction,
         fromCamera: plateFraction != null,
         projectId: widget.projectId,
-        incubation: widget.incubation,
       ),
     ));
   }

@@ -170,7 +170,6 @@ class ApiClient {
     double? plateFraction,
     double plateDiameterMm = 90,
     String sampleGroup = '',
-    int? incubationId,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/analyses'))
       ..headers.addAll(_auth)
@@ -182,7 +181,6 @@ class ApiClient {
         if (volumeMl != null) 'volume_ml': '$volumeMl',
         if (plateFraction != null) 'plate_fraction': '$plateFraction',
         if (sampleGroup.trim().isNotEmpty) 'sample_group': sampleGroup.trim(),
-        if (incubationId != null) 'incubation_id': '$incubationId',
       })
       ..files.add(http.MultipartFile.fromBytes('image', image, filename: filename));
     final body = await _json(() => _client.send(req).then(http.Response.fromStream));
@@ -245,39 +243,6 @@ class ApiClient {
 
   /// El dueño quita a un miembro, o el propio usuario sale del proyecto.
   Future<void> removeMember(int projectId, int userId) => _send('DELETE', '/projects/$projectId/members/$userId');
-
-  // ----------------------------------------------------------------- siembras en incubación
-  Future<List<Incubation>> incubations({bool includeDone = false}) async =>
-      (await _get('/incubations', {if (includeDone) 'include_done': 'true'}) as List)
-          .map((i) => Incubation.fromJson(i as Map<String, dynamic>))
-          .toList();
-
-  Future<Incubation> createIncubation({
-    required String name,
-    required double hours,
-    double? temperatureC,
-    DateTime? seededAt,
-    int? projectId,
-    String sampleGroup = '',
-    int? plates,
-    String notes = '',
-  }) async =>
-      Incubation.fromJson(await _send('POST', '/incubations', {
-        'name': name,
-        'hours': hours,
-        'temperature_c': temperatureC,
-        if (seededAt != null) 'seeded_at': seededAt.toUtc().toIso8601String(),
-        'project_id': projectId,
-        'sample_group': sampleGroup,
-        'plates': plates,
-        'notes': notes,
-      }) as Map<String, dynamic>);
-
-  /// `done: true` = ya se leyeron las placas.
-  Future<Incubation> updateIncubation(int id, {bool? done}) async =>
-      Incubation.fromJson(await _send('PATCH', '/incubations/$id', {'done': ?done}) as Map<String, dynamic>);
-
-  Future<void> deleteIncubation(int id) => _send('DELETE', '/incubations/$id');
 
   // ----------------------------------------------------------------- muestras y exportación
   /// Muestras con varias placas y su UFC/mL combinada (ISO 4833-1).

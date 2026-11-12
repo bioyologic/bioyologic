@@ -12,7 +12,6 @@ import '../widgets/common.dart';
 import 'samples_screen.dart';
 import '../widgets/format.dart';
 import 'capture_screen.dart';
-import 'incubations_screen.dart';
 import 'team_screen.dart';
 
 class ProjectsScreen extends StatelessWidget {
@@ -153,24 +152,21 @@ class ProjectDetailScreen extends StatelessWidget {
                 icon: const Icon(Icons.download_outlined),
                 onPressed: () => exportCsv(context, projectId: p.id),
               ),
-              PopupMenuButton<String>(
-                onSelected: (v) async {
-                  if (v == 'edit') {
-                    await showProjectEditor(context, project: p);
-                  } else if (v == 'delete') {
-                    await _delete(context, p);
-                  } else if (v == 'seed') {
-                    await showIncubationEditor(context, projectId: p.id);
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'seed', child: Text('Registrar siembra (incubación)')),
-                  if (p.isOwner) ...const [
+              // Editar y borrar el proyecto: solo quien lo creó.
+              if (p.isOwner)
+                PopupMenuButton<String>(
+                  onSelected: (v) async {
+                    if (v == 'edit') {
+                      await showProjectEditor(context, project: p);
+                    } else if (v == 'delete') {
+                      await _delete(context, p);
+                    }
+                  },
+                  itemBuilder: (_) => const [
                     PopupMenuItem(value: 'edit', child: Text('Editar')),
                     PopupMenuItem(value: 'delete', child: Text('Eliminar proyecto')),
                   ],
-                ],
-              ),
+                ),
             ],
           ),
           floatingActionButton: FloatingActionButton.extended(

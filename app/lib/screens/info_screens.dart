@@ -241,7 +241,7 @@ class PrivacyScreen extends StatelessWidget {
             'De tu cuenta: nombre, correo, profesión o rol, institución y la fecha en que aceptaste esta '
                 'política. Tu contraseña se guarda cifrada (scrypt) y nadie, ni siquiera el equipo, puede leerla. '
                 'De tu trabajo: las fotos que analizas, los datos de cada muestra (nombre, proyecto, dilución, '
-                'volumen, notas y resultados), tus siembras en incubación y las revisiones que haces.'),
+                'volumen, notas y resultados) y las revisiones que haces.'),
         ('Para qué',
             'Solo para identificarte, calcular los resultados y guardar tu historial y tus proyectos. '
                 'No vendemos ni compartimos tus datos, no hay publicidad, analítica ni rastreadores, y no pedimos '
@@ -258,7 +258,7 @@ class PrivacyScreen extends StatelessWidget {
             'Puedes conocer, actualizar, rectificar y suprimir tus datos, y revocar esta autorización, en '
                 'cualquier momento y sin costo, desde Perfil: "Mi perfil" para actualizarlos, "Descargar mis '
                 'datos" para recibir una copia completa y "Eliminar mi cuenta" para borrar del servidor la cuenta '
-                'y todos sus análisis, proyectos, siembras y fotos. Puedes salir de un proyecto compartido cuando '
+                'y todos sus análisis, proyectos y fotos. Puedes salir de un proyecto compartido cuando '
                 'quieras.'),
         ('Conservación',
             'Tus datos se guardan mientras tengas la cuenta. Un análisis que eliminas pasa a la papelera '

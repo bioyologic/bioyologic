@@ -24,7 +24,6 @@ Proyecto de Diseño en Bioingeniería, Pontificia Universidad Javeriana · Laura
 | **Exportar a Excel** | CSV por proyecto o de todos los análisis |
 | **Cuentas privadas** | Cada usuario ve solo sus datos; verificación del correo y recuperación de contraseña (Ley 1581 de 2012) |
 | **Trabajo en equipo** | Proyectos compartidos: analistas cuentan placas y revisores las aprueban o las devuelven con una nota (nadie aprueba su propio análisis); queda en el PDF y el Excel |
-| **Temporizador de incubación** | Al sembrar, la app avisa cuándo leer las placas («Tus placas de agua de río están listas para leer (24 h)») y guarda las horas reales de incubación |
 | **Tutorial de primer uso** | Tres pantallas sobre cómo tomar una buena foto con la caja de iluminación |
 | **Organización** | Proyectos con gráfico de UFC/mL por muestra, historial con búsqueda, borrado de uno o varios análisis, biblioteca de microorganismos y protocolos |
 | **Papelera** | Lo que se borra queda 30 días: se recupera (o «Deshacer» al instante) o se elimina definitivamente |

@@ -9,8 +9,6 @@ los revisores (y el dueño) aprueban o devuelven los análisis de los demás. To
 proyecto compartido solo lo ve su autor. Los datos anteriores a las cuentas quedan sin dueño (`user_id`
 NULL): nadie los ve hasta que se asignan o se borran con `python -m bioyologic.manage`.
 
-Las siembras en incubación (`incubations`) recuerdan cuándo leer las placas.
-
 Borrar un análisis lo manda a la papelera (`deleted_at`): deja de verse en todas partes, pero su autor puede
 recuperarlo durante TRASH_DAYS días. Después, o al vaciar la papelera, se borra definitivamente con sus fotos.
 """
@@ -85,7 +83,6 @@ CREATE TABLE IF NOT EXISTS analyses (
     reviewer_name TEXT NOT NULL DEFAULT '',
     reviewed_at TEXT,
     review_note TEXT NOT NULL DEFAULT '',
-    incubation_id INTEGER REFERENCES incubations(id) ON DELETE SET NULL,
     deleted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -94,20 +91,6 @@ CREATE TABLE IF NOT EXISTS project_members (
     role TEXT NOT NULL,             -- analista | revisor (el dueño está en projects.user_id)
     added_at TEXT NOT NULL,
     PRIMARY KEY (project_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS incubations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    name TEXT NOT NULL,
-    sample_group TEXT NOT NULL DEFAULT '',
-    plates INTEGER,
-    seeded_at TEXT NOT NULL,
-    hours REAL NOT NULL,
-    temperature_c REAL,
-    notes TEXT NOT NULL DEFAULT '',
-    done_at TEXT,
-    created_at TEXT NOT NULL
 );
 """
 
@@ -125,7 +108,6 @@ MIGRATIONS = {
                  "reviewer_name": "TEXT NOT NULL DEFAULT ''",
                  "reviewed_at": "TEXT",
                  "review_note": "TEXT NOT NULL DEFAULT ''",
-                 "incubation_id": "INTEGER REFERENCES incubations(id) ON DELETE SET NULL",
                  # Papelera: fecha en que se borró (NULL = activo).
                  "deleted_at": "TEXT"},
 }
@@ -134,10 +116,8 @@ INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_analyses_project ON analyses(project_id);
 CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at);
 CREATE INDEX IF NOT EXISTS idx_analyses_user ON analyses(user_id);
-CREATE INDEX IF NOT EXISTS idx_analyses_incubation ON analyses(incubation_id);
 CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
 CREATE INDEX IF NOT EXISTS idx_members_user ON project_members(user_id);
-CREATE INDEX IF NOT EXISTS idx_incubations_user ON incubations(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
@@ -298,7 +278,7 @@ class Store:
         self._exec("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 
     def delete_user(self, user_id: int) -> None:
-        """Supresión total (Ley 1581): cuenta, sesiones, proyectos, análisis, siembras y fotos.
+        """Supresión total (Ley 1581): cuenta, sesiones, proyectos, análisis y fotos.
 
         Los análisis que otros miembros hicieron en sus proyectos compartidos siguen siendo de esos miembros
         (quedan sin proyecto), y en las revisiones que hizo su nombre se reemplaza."""
@@ -306,7 +286,6 @@ class Store:
             self._remove_images(r["id"])
         self._exec("DELETE FROM analyses WHERE user_id = ?", (user_id,))
         self._exec("UPDATE analyses SET reviewer_name = 'Cuenta eliminada' WHERE reviewed_by = ?", (user_id,))
-        self._exec("DELETE FROM incubations WHERE user_id = ?", (user_id,))
         self._exec("DELETE FROM projects WHERE user_id = ?", (user_id,))
         self._exec("DELETE FROM users WHERE id = ?", (user_id,))
 
@@ -317,7 +296,6 @@ class Store:
                 "memberships": self._all(
                     """SELECT p.name AS project, m.role, m.added_at FROM project_members m
                        JOIN projects p ON p.id = m.project_id WHERE m.user_id = ?""", (user_id,)),
-                "incubations": self._all("SELECT * FROM incubations WHERE user_id = ?", (user_id,)),
                 "analyses": [self.get_analysis(a["id"], user_id)
                              for a in self.list_analyses(user_id, limit=1_000_000, mine_only=True)],
                 "trash": self.list_trash(user_id)}
@@ -434,26 +412,21 @@ class Store:
     def add_analysis(self, *, user_id: int, sample_name: str, result: dict, original: np.ndarray,
                      annotated: np.ndarray, project_id: int | None = None,
                      dilution: float | None = None, volume_ml: float | None = None,
-                     notes: str = "", sample_group: str = "", incubation_id: int | None = None) -> dict:
+                     notes: str = "", sample_group: str = "") -> dict:
         s = result["summary"]
         cur = self._exec(
             """INSERT INTO analyses (user_id, access_key, project_id, sample_name, sample_group, created_at,
-                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json, incubation_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, secrets.token_urlsafe(16), project_id, sample_name, sample_group.strip(),
              result.get("analyzed_at", _now()),
              dilution, volume_ml, result.get("mm_per_px"), s["total"], s["cfu_per_ml"], s["status"], notes,
-             json.dumps(result, ensure_ascii=False), incubation_id))
+             json.dumps(result, ensure_ascii=False)))
         aid = cur.lastrowid
         q = [cv2.IMWRITE_JPEG_QUALITY, 90]
         cv2.imwrite(str(self.image_path(aid, "original")), original, q)
         cv2.imwrite(str(self.image_path(aid, "annotated")), annotated, q)
         cv2.imwrite(str(self.image_path(aid, "thumb")), _thumbnail(original), q)
-        if incubation_id is not None:
-            # Siembra con número de placas: se da por leída cuando se analizaron todas.
-            self._exec("""UPDATE incubations SET done_at = ? WHERE id = ? AND done_at IS NULL AND plates IS NOT NULL
-                          AND plates <= (SELECT COUNT(*) FROM analyses WHERE incubation_id = ? AND deleted_at IS NULL)""",
-                       (_now(), incubation_id, incubation_id))
         return self.get_analysis(aid, user_id)
 
     def image_path(self, analysis_id: int, kind: str) -> Path:
@@ -485,7 +458,6 @@ class Store:
         row["correction"] = result.get("correction")
         row["annotated_version"] = result.get("annotated_version", 0)
         row["quality"] = result.get("quality")
-        row["incubation"] = result.get("incubation")
         # Revisión: solo tiene sentido en proyectos compartidos (sin miembros, nadie más revisa).
         estado = row.pop("review_status", "")
         row.pop("reviewed_by", None)
@@ -661,53 +633,6 @@ class Store:
             sql += " AND project_id = ?"
             params += (project_id,)
         return [r["sample_group"] for r in self._all(sql + " ORDER BY sample_group", params)]
-
-    # ---------------------------------------------------------------- siembras en incubación
-    _INCUBATION_SELECT = """
-        SELECT i.*, p.name AS project_name, u.name AS created_by,
-               (SELECT COUNT(*) FROM analyses x WHERE x.incubation_id = i.id AND x.deleted_at IS NULL) AS analyses_count
-        FROM incubations i
-        LEFT JOIN projects p ON p.id = i.project_id
-        LEFT JOIN users u ON u.id = i.user_id
-    """
-    _INC_VISIBLE = f"(i.user_id = ? OR i.project_id IN {_MY_PROJECTS})"
-
-    def create_incubation(self, user_id: int, *, name: str, hours: float, seeded_at: str | None = None,
-                          project_id: int | None = None, sample_group: str = "", plates: int | None = None,
-                          temperature_c: float | None = None, notes: str = "") -> dict:
-        now = _now()
-        cur = self._exec(
-            """INSERT INTO incubations (user_id, project_id, name, sample_group, plates, seeded_at, hours,
-                   temperature_c, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, project_id, name, sample_group.strip(), plates, seeded_at or now, hours, temperature_c,
-             notes, now))
-        return self.get_incubation(cur.lastrowid, user_id)
-
-    def get_incubation(self, incubation_id: int, user_id: int) -> dict | None:
-        rows = self._all(self._INCUBATION_SELECT + f" WHERE i.id = ? AND {self._INC_VISIBLE}",
-                         (incubation_id, user_id, user_id, user_id))
-        return rows[0] if rows else None
-
-    def list_incubations(self, user_id: int, include_done: bool = False) -> list[dict]:
-        """Siembras propias y de proyectos compartidos; sin `include_done`, solo las que faltan por leer."""
-        where = f"{self._INC_VISIBLE}" + ("" if include_done else " AND i.done_at IS NULL")
-        return self._all(self._INCUBATION_SELECT + f" WHERE {where} ORDER BY i.done_at IS NOT NULL, "
-                         "datetime(i.seeded_at, '+' || CAST(i.hours * 60 AS INTEGER) || ' minutes'), i.id",
-                         (user_id, user_id, user_id))
-
-    def update_incubation(self, incubation_id: int, user_id: int, **fields) -> dict | None:
-        allowed = {k: v for k, v in fields.items()
-                   if k in ("name", "hours", "temperature_c", "notes", "plates", "done_at", "seeded_at")
-                   and (v is not None or k in ("done_at", "temperature_c", "plates"))}
-        if allowed:
-            sets = ", ".join(f"{k} = ?" for k in allowed)
-            self._exec(f"UPDATE incubations SET {sets} WHERE id = ?", (*allowed.values(), incubation_id))
-        return self.get_incubation(incubation_id, user_id)
-
-    def delete_incubation(self, incubation_id: int, user_id: int) -> bool:
-        """Solo quien creó la siembra la borra; sus análisis se conservan."""
-        return self._exec("DELETE FROM incubations WHERE id = ? AND user_id = ?",
-                          (incubation_id, user_id)).rowcount > 0
 
     # ---------------------------------------------------------------- resumen
     def stats(self, user_id: int) -> dict:

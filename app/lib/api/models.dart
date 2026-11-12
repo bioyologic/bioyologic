@@ -34,7 +34,6 @@ class Analysis {
         canCorrect = (j['can_correct'] as bool?) ?? true,
         canReview = (j['can_review'] as bool?) ?? false,
         review = j['review'] == null ? null : Review.fromJson(j['review'] as Map<String, dynamic>),
-        incubation = j['incubation'] == null ? null : IncubationRecord.fromJson(j['incubation'] as Map<String, dynamic>),
         deletedAt = j['deleted_at'] == null ? null : DateTime.parse(j['deleted_at'] as String).toLocal(),
         purgeAt = j['purge_at'] == null ? null : DateTime.parse(j['purge_at'] as String).toLocal();
 
@@ -57,9 +56,6 @@ class Analysis {
 
   /// Revisión (solo en proyectos compartidos); null si el proyecto no es compartido.
   final Review? review;
-
-  /// Siembra de la que salió la placa, con las horas reales de incubación.
-  final IncubationRecord? incubation;
 
   final int id;
   final int? projectId;
@@ -382,60 +378,6 @@ class Member {
 
 String roleLabel(String role) =>
     {'owner': 'Dueño', 'analista': 'Analista', 'revisor': 'Revisor'}[role] ?? role;
-
-/// Siembra en incubación: la app avisa cuando las placas están listas para leer.
-class Incubation {
-  Incubation.fromJson(Map<String, dynamic> j)
-      : id = j['id'] as int,
-        name = j['name'] as String,
-        projectId = j['project_id'] as int?,
-        projectName = j['project_name'] as String?,
-        sampleGroup = (j['sample_group'] as String?) ?? '',
-        plates = j['plates'] as int?,
-        seededAt = DateTime.parse(j['seeded_at'] as String).toLocal(),
-        hours = _d(j['hours'])!,
-        temperatureC = _d(j['temperature_c']),
-        readyAt = DateTime.parse(j['ready_at'] as String).toLocal(),
-        notes = (j['notes'] as String?) ?? '',
-        doneAt = j['done_at'] == null ? null : DateTime.parse(j['done_at'] as String).toLocal(),
-        analysesCount = (j['analyses_count'] as int?) ?? 0,
-        createdBy = (j['created_by'] as String?) ?? '',
-        isMine = (j['is_mine'] as bool?) ?? true;
-
-  final int id;
-  final String name;
-  final int? projectId;
-  final String? projectName;
-  final String sampleGroup;
-  final int? plates;
-  final DateTime seededAt;
-  final double hours;
-  final double? temperatureC;
-  final DateTime readyAt;
-  final String notes;
-  final DateTime? doneAt;
-  final int analysesCount;
-  final String createdBy;
-  final bool isMine;
-
-  bool isReady([DateTime? now]) => !(now ?? DateTime.now()).isBefore(readyAt);
-}
-
-/// Lo que guarda un análisis de su siembra.
-class IncubationRecord {
-  IncubationRecord.fromJson(Map<String, dynamic> j)
-      : name = j['name'] as String,
-        hours = _d(j['hours'])!,
-        temperatureC = _d(j['temperature_c']),
-        readAfterHours = _d(j['read_after_hours'])!;
-
-  final String name;
-  final double hours;
-  final double? temperatureC;
-
-  /// Horas reales desde la siembra hasta la foto.
-  final double readAfterHours;
-}
 
 /// Placa dentro de una muestra.
 class SamplePlate {

@@ -1,6 +1,4 @@
-"""Trabajo en equipo (proyectos compartidos con revisión) y siembras en incubación."""
-
-from datetime import datetime, timedelta
+"""Trabajo en equipo: proyectos compartidos con revisión."""
 
 from fastapi.testclient import TestClient
 
@@ -117,37 +115,3 @@ def test_deleting_owner_keeps_members_analyses(ctx):
     assert client.request("DELETE", "/auth/me", json={"password": "clave-segura-1"}).status_code == 204
     restante = beto.get(f"/analyses/{a['id']}").json()
     assert restante["project_id"] is None and beto.get("/projects").json() == []
-
-
-def test_incubation_timer(ctx):
-    client, jpg, _ = ctx
-    p, beto, _ = _equipo(client)
-    hace = (datetime.now().astimezone() - timedelta(hours=25)).isoformat()
-    r = client.post("/incubations", json={"name": "Agua de río", "hours": 24, "temperature_c": 37,
-                                          "seeded_at": hace, "project_id": p["id"], "plates": 2})
-    assert r.status_code == 201, r.text
-    inc = r.json()
-    lista = datetime.fromisoformat(inc["ready_at"])
-    assert abs((lista - datetime.fromisoformat(hace)).total_seconds() - 24 * 3600) < 1
-    nueva = client.post("/incubations", json={"name": "Superficies", "hours": 48}).json()
-    # Ordenadas: primero la que se lee antes; Beto ve la del proyecto compartido, no la personal de Ana
-    assert [i["name"] for i in client.get("/incubations").json()] == ["Agua de río", "Superficies"]
-    assert [i["name"] for i in beto.get("/incubations").json()] == ["Agua de río"]
-    assert beto.delete(f"/incubations/{inc['id']}").status_code == 403
-
-    # Cada placa analizada guarda cuántas horas incubó; con las 2 placas, la siembra se da por leída
-    a = _upload(beto, jpg, project_id=p["id"], incubation_id=inc["id"]).json()
-    assert a["incubation"]["hours"] == 24 and 24.9 <= a["incubation"]["read_after_hours"] <= 25.2
-    assert client.get(a["report_url"]).content[:4] == b"%PDF"
-    assert len(client.get("/incubations").json()) == 2
-    _upload(client, jpg, project_id=p["id"], incubation_id=inc["id"])
-    assert [i["name"] for i in client.get("/incubations").json()] == ["Superficies"]
-    hechas = client.get("/incubations", params={"include_done": True}).json()
-    assert hechas[-1]["name"] == "Agua de río" and hechas[-1]["analyses_count"] == 2
-
-    # Marcar como leída a mano, y borrar
-    assert client.patch(f"/incubations/{nueva['id']}", json={"done": True}).json()["done_at"]
-    assert client.get("/incubations").json() == []
-    assert client.delete(f"/incubations/{nueva['id']}").status_code == 204
-    assert client.post("/incubations", json={"name": "x", "hours": 0}).status_code == 422
-    assert _upload(client, jpg, incubation_id=9999).status_code == 404

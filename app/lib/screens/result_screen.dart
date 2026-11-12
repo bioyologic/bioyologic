@@ -296,15 +296,10 @@ class _SummaryTab extends StatelessWidget {
             _Row(Icons.palette_outlined, 'Color predominante', capitalize(predColor), swatch: swatch),
             _Row(Icons.blur_circular, 'Bordes', marginLabels[s.predominant['margin']] ?? '—'),
             _Row(Icons.science_outlined, 'UFC/mL', s.cfuPerMl == null ? 'Sin dilución' : scientific(s.cfuPerMl!),
-                last: a.dilution == null && a.incubation == null),
+                last: a.dilution == null),
             if (a.dilution != null)
               _Row(Icons.water_drop_outlined, 'Siembra',
-                  '${dilutionLabel(a.dilution!)} · ${fmt(a.volumeMl, 2)} mL', last: a.incubation == null),
-            if (a.incubation != null)
-              _Row(Icons.timer_outlined, 'Incubación',
-                  '${fmt(a.incubation!.readAfterHours, 1)} h de ${fmt(a.incubation!.hours, 0)} h'
-                  '${a.incubation!.temperatureC == null ? '' : ' · ${fmt(a.incubation!.temperatureC, 0)} °C'}',
-                  last: true),
+                  '${dilutionLabel(a.dilution!)} · ${fmt(a.volumeMl, 2)} mL', last: true),
           ]),
         ),
         const SizedBox(height: 12),

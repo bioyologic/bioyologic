@@ -194,12 +194,6 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
         rows.insert(1, ["Corrección manual", Paragraph(
             f"El modelo detectó {corr['detected_total']}; {' y '.join(cambios) or 'sin cambios'} a mano "
             f"({quien}{_fecha(corr['at'])}). " + _leyenda(len(corr["removed"]), len(corr["added"])), cell)])
-    inc = analysis.get("incubation")
-    if inc:
-        temp = f" a {_num(inc['temperature_c'], 0)} °C" if inc.get("temperature_c") is not None else ""
-        rows.append(["Incubación", Paragraph(
-            f"{_num(inc['hours'], 0)} h{temp} (sembrada el {_fecha(inc['seeded_at'])}; "
-            f"foto a las {_num(inc['read_after_hours'], 1)} h)", cell)])
     rev = analysis.get("review")
     if rev:
         if rev["status"] == "pendiente":
