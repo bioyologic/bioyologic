@@ -278,17 +278,32 @@ def _require(obj, what: str):
     return obj
 
 
+# Lado máximo del recorte: un encuadre muy alejado (cuadro mucho más grande que la foto) se reduce a este tamaño.
+LADO_MAX_RECORTE = 4096
+
+
 def crop_frame(img: np.ndarray, x: float | None, y: float | None, size: float | None) -> np.ndarray:
     """Recorta el cuadrado que el usuario encuadró en la app (con el círculo guía al 80 % de su lado).
 
     `x`, `y`: esquina superior izquierda como fracción del ancho y del alto; `size`: lado como fracción del lado
-    corto. Sin `size`, el cuadrado central completo. Si el encuadre se sale de la foto, se ajusta dentro."""
+    corto. Sin `size`, el cuadrado central completo. El cuadro puede salirse de la foto (placa en una esquina o
+    más grande que la foto): lo que queda fuera se rellena de negro, igual que se ve en la app."""
     h, w = img.shape[:2]
-    lado = max(16, min(min(h, w), round((size or 1.0) * min(h, w))))
-    x0 = (w - lado) // 2 if x is None else round(x * w)
-    y0 = (h - lado) // 2 if y is None else round(y * h)
-    x0, y0 = min(max(0, x0), w - lado), min(max(0, y0), h - lado)
-    return np.ascontiguousarray(img[y0:y0 + lado, x0:x0 + lado])
+    lado = max(16, round((size or 1.0) * min(h, w)))
+    x0 = (w - lado) / 2 if x is None else x * w
+    y0 = (h - lado) / 2 if y is None else y * h
+    if lado > LADO_MAX_RECORTE:
+        f = LADO_MAX_RECORTE / lado
+        img = cv2.resize(img, (max(1, round(w * f)), max(1, round(h * f))), interpolation=cv2.INTER_AREA)
+        h, w = img.shape[:2]
+        lado, x0, y0 = LADO_MAX_RECORTE, x0 * f, y0 * f
+    x0, y0 = round(x0), round(y0)
+    out = np.zeros((lado, lado) + img.shape[2:], img.dtype)
+    sx0, sy0 = max(0, x0), max(0, y0)  # parte del cuadro que cae dentro de la foto
+    sx1, sy1 = min(w, x0 + lado), min(h, y0 + lado)
+    if sx1 > sx0 and sy1 > sy0:
+        out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = img[sy0:sy1, sx0:sx1]
+    return out
 
 
 # Recortes pequeños (p. ej. una placa que ocupa poco de la foto, ampliada en la app): el detector se entrenó con
@@ -570,9 +585,10 @@ async def create_analysis(
     plate_fraction: float | None = Form(None, gt=0, le=1.0),
     plate_diameter_mm: float = Form(90.0, gt=0),
     crop_square: bool = Form(False, description="Recortar el cuadrado central (versiones anteriores de la app)"),
-    crop_x: float | None = Form(None, ge=0, le=1, description="Encuadre: borde izquierdo, fracción del ancho"),
-    crop_y: float | None = Form(None, ge=0, le=1, description="Encuadre: borde superior, fracción del alto"),
-    crop_size: float | None = Form(None, gt=0, le=1, description="Encuadre: lado del cuadrado, fracción del lado corto"),
+    crop_x: float | None = Form(None, ge=-5, le=5, description="Encuadre: borde izquierdo, fracción del ancho "
+                                                                "(fuera de 0-1 si el cuadro se sale de la foto)"),
+    crop_y: float | None = Form(None, ge=-5, le=5, description="Encuadre: borde superior, fracción del alto"),
+    crop_size: float | None = Form(None, gt=0, le=5, description="Encuadre: lado del cuadrado, fracción del lado corto"),
     notes: str = Form(""),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
     store: Store = Depends(get_store),

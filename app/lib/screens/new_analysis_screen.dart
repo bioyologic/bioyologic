@@ -289,8 +289,14 @@ class _CropPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final iw = img.width.toDouble(), ih = img.height.toDouble();
     final lado = f.size * (iw < ih ? iw : ih);
-    final src = Rect.fromLTWH(f.x * iw, f.y * ih, lado, lado);
-    canvas.drawImageRect(img, src, Offset.zero & size, Paint()..filterQuality = FilterQuality.medium);
+    // El cuadro puede salirse de la foto: lo de fuera queda negro, como lo recorta el servidor.
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.black);
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.scale(size.width / lado);
+    canvas.translate(-f.x * iw, -f.y * ih);
+    canvas.drawImage(img, Offset.zero, Paint()..filterQuality = FilterQuality.medium);
+    canvas.restore();
   }
 
   @override

@@ -175,10 +175,24 @@ def test_crop_frame_from_the_framing_screen(ctx, tmp_path):
     assert a["mm_per_px"] == pytest.approx(90 / (0.8 * 600))
     guardada = cv2.imread(str(tmp_path / "images" / f"{a['id']}_original.jpg"))
     assert np.abs(guardada.astype(int) - placa.astype(int)).mean() < 6  # es la placa, no otra zona
-    # Un encuadre que se sale de la foto se ajusta dentro
-    from bioyologic.api.main import crop_frame
-    recorte = crop_frame(foto, 0.9, 0.95, 0.5)
-    assert recorte.shape[:2] == (450, 450) and (recorte == foto[1050:1500, 450:900]).all()
+    # Un encuadre que se sale de la foto conserva su tamaño y lo de fuera queda negro
+    from bioyologic.api import main
+    recorte = main.crop_frame(foto, 0.9, 0.95, 0.5)
+    assert recorte.shape[:2] == (450, 450)
+    assert (recorte[:75, :90] == foto[1425:1500, 810:900]).all() and not recorte[75:, :].any()
+    # Cuadro más grande que la foto (alejado): la foto entera queda dentro, centrada
+    grande = main.crop_frame(foto, -0.5, -0.1, 2.0)  # 1800 px, desde (-450, -150)
+    assert grande.shape[:2] == (1800, 1800) and (grande[150:1650, 450:1350] == foto).all()
+    assert not grande[:150].any() and not grande[:, :450].any()
+
+
+def test_huge_frame_is_reduced(monkeypatch):
+    from bioyologic.api import main
+    monkeypatch.setattr(main, "LADO_MAX_RECORTE", 500)
+    foto = np.full((400, 300, 3), 200, np.uint8)
+    out = main.crop_frame(foto, -1.0, -0.5, 4.0)  # 1200 px -> 500
+    assert out.shape[:2] == (500, 500)
+    assert out[167, 187].tolist() == [200, 200, 200] and not out[0, 0].any()  # centro de la foto: (450, 400) × 0.417
 
 
 def test_small_photos_are_enlarged_for_detection(ctx, monkeypatch):
