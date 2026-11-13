@@ -148,6 +148,17 @@ def test_crop_square_keeps_the_camera_frame(ctx, tmp_path):
     assert b["image_size"] == [900, 600]
 
 
+def test_web_app_is_always_revalidated():
+    """La app web se sirve con no-cache para que cada actualización llegue enseguida a los celulares."""
+    from bioyologic.api.main import WEB_BUILD
+    if not (WEB_BUILD / "index.html").exists():
+        pytest.skip("app web sin compilar")
+    r = TestClient(app).get("/app/")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    again = TestClient(app).get("/app/", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304
+
+
 def test_resolve_scale():
     assert resolve_scale((1000, 800, 3), 0.05, 0.9, 90) == 0.05
     assert resolve_scale((1000, 800, 3), None, 0.9, 90) == pytest.approx(90 / 720)

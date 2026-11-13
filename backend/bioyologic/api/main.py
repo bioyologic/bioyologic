@@ -960,8 +960,21 @@ def library_image(entry_id: str, store: Store = Depends(get_store)) -> FileRespo
 
 
 # --------------------------------------------------------------------- app web
+class _AppWeb(StaticFiles):
+    """Archivos de la app web con `Cache-Control: no-cache`.
+
+    Sus nombres no cambian entre versiones (main.dart.js…): sin esta cabecera Safari los reutilizaba por su
+    cuenta y seguía abriendo la app vieja horas después de actualizar el servidor. Con ella el navegador
+    pregunta siempre si cambiaron y, si no, el servidor responde 304 sin volver a enviarlos."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if WEB_BUILD.exists():
-    app.mount("/app", StaticFiles(directory=WEB_BUILD, html=True), name="web")
+    app.mount("/app", _AppWeb(directory=WEB_BUILD, html=True), name="web")
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
