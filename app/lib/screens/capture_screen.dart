@@ -111,7 +111,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() => _busy = true);
     try {
       final x = await c.takePicture();
-      await _continue(await x.readAsBytes(), 'placa.jpg', useGuide ? guideFraction : null);
+      // Se queda solo el cuadrado que muestra la vista de la cámara (el recorte lo hace el servidor).
+      await _continue(await x.readAsBytes(), 'placa.jpg', useGuide ? guideFraction : null, cropSquare: true);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo hacer la foto')));
@@ -127,7 +128,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     await _continue(await x.readAsBytes(), x.name, null);
   }
 
-  Future<void> _continue(Uint8List bytes, String name, double? plateFraction) async {
+  Future<void> _continue(Uint8List bytes, String name, double? plateFraction, {bool cropSquare = false}) async {
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => NewAnalysisScreen(
@@ -135,6 +136,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         filename: name,
         plateFraction: plateFraction,
         fromCamera: plateFraction != null,
+        cropSquare: cropSquare,
         projectId: widget.projectId,
       ),
     ));

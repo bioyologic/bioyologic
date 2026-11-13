@@ -18,6 +18,7 @@ class NewAnalysisScreen extends StatefulWidget {
     required this.filename,
     this.plateFraction,
     this.fromCamera = false,
+    this.cropSquare = false,
     this.projectId,
   });
 
@@ -25,6 +26,9 @@ class NewAnalysisScreen extends StatefulWidget {
   final String filename;
   final double? plateFraction;
   final bool fromCamera;
+
+  /// Foto de la cámara de la app: se analiza solo el cuadrado central que se veía al encuadrar.
+  final bool cropSquare;
   final int? projectId;
 
   @override
@@ -95,6 +99,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
         dilution: _dilution,
         volumeMl: _dilution == null ? null : _volumeMl,
         plateFraction: fraction,
+        cropSquare: widget.cropSquare,
         plateDiameterMm: state.plateDiameterMm,
         sampleGroup: _group.text,
       );
@@ -122,10 +127,13 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: AspectRatio(
-                  aspectRatio: 1.4,
-                  child: Container(color: Colors.black, child: Image.memory(widget.image, fit: BoxFit.contain)),
-                ),
+                // Foto de la cámara: se ve el mismo cuadrado que se encuadró (es lo que se analiza).
+                child: widget.cropSquare
+                    ? AspectRatio(aspectRatio: 1, child: Image.memory(widget.image, fit: BoxFit.cover))
+                    : AspectRatio(
+                        aspectRatio: 1.4,
+                        child: Container(color: Colors.black, child: Image.memory(widget.image, fit: BoxFit.contain)),
+                      ),
               ),
               const SizedBox(height: 20),
               TextFormField(

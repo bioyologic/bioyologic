@@ -130,6 +130,24 @@ def test_library_has_every_species_of_the_classifier():
         assert e["id"] == name.lower().replace(" ", "-")
 
 
+def test_crop_square_keeps_the_camera_frame(ctx, tmp_path):
+    """La cámara de la app encuadra el cuadrado central: lo de los lados no se guarda ni se analiza."""
+    import numpy as np
+    client, jpg, labels = ctx
+    placa = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)  # 600 × 600
+    ancha = cv2.copyMakeBorder(placa, 0, 0, 150, 150, cv2.BORDER_CONSTANT, value=(255, 255, 255))  # 900 × 600
+    _, buf = cv2.imencode(".jpg", ancha)
+    a = _upload(client, buf.tobytes(), crop_square="true", plate_fraction=0.8).json()
+    assert a["image_size"] == [600, 600]
+    assert a["summary"]["total"] == len(labels)
+    assert a["mm_per_px"] == pytest.approx(90 / (0.8 * 600))
+    guardada = cv2.imread(str(tmp_path / "images" / f"{a['id']}_original.jpg"))
+    assert guardada.shape[:2] == (600, 600)
+    # Sin la opción (fotos de la galería) la foto se guarda completa
+    b = _upload(client, buf.tobytes()).json()
+    assert b["image_size"] == [900, 600]
+
+
 def test_resolve_scale():
     assert resolve_scale((1000, 800, 3), 0.05, 0.9, 90) == 0.05
     assert resolve_scale((1000, 800, 3), None, 0.9, 90) == pytest.approx(90 / 720)

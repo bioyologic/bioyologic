@@ -539,6 +539,7 @@ async def create_analysis(
     mm_per_px: float | None = Form(None, gt=0),
     plate_fraction: float | None = Form(None, gt=0, le=1.0),
     plate_diameter_mm: float = Form(90.0, gt=0),
+    crop_square: bool = Form(False, description="Recortar el cuadrado central, el encuadre de la cámara de la app"),
     notes: str = Form(""),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
     store: Store = Depends(get_store),
@@ -559,6 +560,13 @@ async def create_analysis(
     img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(400, "No se pudo leer la imagen")
+    if crop_square:
+        # La cámara de la app muestra el cuadrado central de la imagen (con el círculo guía al 80 % de su lado):
+        # se guarda y analiza solo ese cuadrado. El lado corto no cambia, así que plate_fraction sigue valiendo.
+        h, w = img.shape[:2]
+        lado = min(h, w)
+        y0, x0 = (h - lado) // 2, (w - lado) // 2
+        img = np.ascontiguousarray(img[y0:y0 + lado, x0:x0 + lado])
 
     scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
     quality = assess(img)

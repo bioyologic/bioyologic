@@ -168,6 +168,7 @@ class ApiClient {
     double? dilution,
     double? volumeMl,
     double? plateFraction,
+    bool cropSquare = false,
     double plateDiameterMm = 90,
     String sampleGroup = '',
   }) async {
@@ -180,6 +181,7 @@ class ApiClient {
         if (dilution != null) 'dilution': '$dilution',
         if (volumeMl != null) 'volume_ml': '$volumeMl',
         if (plateFraction != null) 'plate_fraction': '$plateFraction',
+        if (cropSquare) 'crop_square': 'true',
         if (sampleGroup.trim().isNotEmpty) 'sample_group': sampleGroup.trim(),
       })
       ..files.add(http.MultipartFile.fromBytes('image', image, filename: filename));
