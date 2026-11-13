@@ -109,7 +109,7 @@ class ColonyDetector:
         if not hasattr(self.model, "export"):     # OnnxDetector
             return self.model.predict(images, self.conf, self.iou, self.imgsz)
         out = []
-        for res in self.model.predict(images, conf=self.conf, iou=self.iou, imgsz=self.imgsz,
+        for res in self.model.predict(images, conf=self.conf, iou=self.iou, imgsz=self.imgsz, max_det=3000,
                                       device=self.device, verbose=False):
             b = res.boxes
             out.append((b.xyxy.cpu().numpy(), b.conf.cpu().numpy(), b.cls.cpu().numpy().astype(int)))

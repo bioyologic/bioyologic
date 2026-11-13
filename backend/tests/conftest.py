@@ -15,4 +15,6 @@ def _placas_sinteticas_pequenas(monkeypatch):
     """Las placas sintéticas de las pruebas miden 600-900 px: sin esto, todas tendrían el aviso de poca
     resolución. Las pruebas de ese aviso vuelven a poner el umbral real."""
     from bioyologic.analysis import quality
+    from bioyologic.api import main
     monkeypatch.setattr(quality, "PLACA_PX_MIN", 0)
+    monkeypatch.setattr(main, "MIN_LADO_DETECCION", 0)  # sin ampliar: las cajas falsas están en píxeles de 600

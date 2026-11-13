@@ -61,7 +61,7 @@ def letterbox(img: np.ndarray, size: int) -> tuple[np.ndarray, float, int, int]:
 class OnnxDetector:
     """Detector YOLO (salida [B, 4 + clases, anclas]) con la misma interfaz que usa ColonyDetector."""
 
-    def __init__(self, path: str | Path, max_det: int = 300) -> None:
+    def __init__(self, path: str | Path, max_det: int = 3000) -> None:
         self.model = OnnxModel(path)
         self.names = self.model.names
         self.max_det = max_det

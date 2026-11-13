@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -157,6 +158,36 @@ def test_web_app_is_always_revalidated():
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
     again = TestClient(app).get("/app/", headers={"If-None-Match": r.headers["etag"]})
     assert again.status_code == 304
+
+
+def test_crop_frame_from_the_framing_screen(ctx, tmp_path):
+    """El encuadre elegido en la app (cuadrado en cualquier parte de la foto) es lo único que se analiza."""
+    import numpy as np
+    client, jpg, labels = ctx
+    placa = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)  # 600 × 600
+    # Foto vertical de 900 × 1500 con la placa arriba a la izquierda (como en la caja de iluminación)
+    foto = np.full((1500, 900, 3), 30, np.uint8)
+    foto[100:700, 50:650] = placa
+    _, buf = cv2.imencode(".jpg", foto)
+    a = _upload(client, buf.tobytes(), crop_x=50 / 900, crop_y=100 / 1500, crop_size=600 / 900,
+                plate_fraction=0.8).json()
+    assert a["image_size"] == [600, 600] and a["summary"]["total"] == len(labels)
+    assert a["mm_per_px"] == pytest.approx(90 / (0.8 * 600))
+    guardada = cv2.imread(str(tmp_path / "images" / f"{a['id']}_original.jpg"))
+    assert np.abs(guardada.astype(int) - placa.astype(int)).mean() < 6  # es la placa, no otra zona
+    # Un encuadre que se sale de la foto se ajusta dentro
+    from bioyologic.api.main import crop_frame
+    recorte = crop_frame(foto, 0.9, 0.95, 0.5)
+    assert recorte.shape[:2] == (450, 450) and (recorte == foto[1050:1500, 450:900]).all()
+
+
+def test_small_photos_are_enlarged_for_detection(ctx, monkeypatch):
+    from bioyologic.api import main
+    monkeypatch.setattr(main, "MIN_LADO_DETECCION", 1000)
+    img = np.zeros((420, 420, 3), np.uint8)
+    grande, f = main.enlarge_small(img)
+    assert grande.shape[:2] == (1280, 1280) and f == pytest.approx(1280 / 420)
+    assert main.enlarge_small(np.zeros((1500, 1200, 3), np.uint8))[1] == 1.0
 
 
 def test_resolve_scale():

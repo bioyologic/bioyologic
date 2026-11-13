@@ -133,16 +133,17 @@ PROB_MIN_BAJA_RESOLUCION = 0.90
 
 
 def classify_species(img: np.ndarray, dets: list[Detection], clf: SpeciesClassifier | None,
-                     plate_px: float | None = None):
+                     plate_px: float | None = None, low_res: bool | None = None):
     """Pone la especie en cada detección y devuelve la especie de la placa (o None).
 
-    `plate_px`: diámetro de la placa en píxeles (del control de calidad). Si la foto tiene poca resolución se
-    amplía para clasificar y, si aun así la especie no es muy probable, las colonias quedan sin especie y la
-    placa se da por no identificada: se muestran las candidatas, pero no se afirma ninguna."""
+    `plate_px`: diámetro de la placa en píxeles de `img`. Si es pequeño, la imagen se amplía para clasificar.
+    `low_res`: la foto original tenía poca resolución (aviso del control de calidad; por defecto se deduce de
+    `plate_px`). Entonces, si la especie no es muy probable, las colonias quedan sin especie y la placa se da
+    por no identificada: se muestran las candidatas, pero no se afirma ninguna."""
     if clf is None or not dets:
         return dets, None
     boxes = [(d.x1, d.y1, d.x2, d.y2) for d in dets]
-    baja = plate_px is not None and plate_px < quality_mod.PLACA_PX_MIN
+    baja = low_res if low_res is not None else (plate_px is not None and plate_px < quality_mod.PLACA_PX_MIN)
     if plate_px is not None and plate_px < AMPLIAR_DESDE_PX:
         f = min(3.0, AMPLIAR_A_PX / max(plate_px, 1.0))
         img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_LANCZOS4)
@@ -275,6 +276,35 @@ def _require(obj, what: str):
     if obj is None:
         raise HTTPException(404, f"{what} no encontrado")
     return obj
+
+
+def crop_frame(img: np.ndarray, x: float | None, y: float | None, size: float | None) -> np.ndarray:
+    """Recorta el cuadrado que el usuario encuadró en la app (con el círculo guía al 80 % de su lado).
+
+    `x`, `y`: esquina superior izquierda como fracción del ancho y del alto; `size`: lado como fracción del lado
+    corto. Sin `size`, el cuadrado central completo. Si el encuadre se sale de la foto, se ajusta dentro."""
+    h, w = img.shape[:2]
+    lado = max(16, min(min(h, w), round((size or 1.0) * min(h, w))))
+    x0 = (w - lado) // 2 if x is None else round(x * w)
+    y0 = (h - lado) // 2 if y is None else round(y * h)
+    x0, y0 = min(max(0, x0), w - lado), min(max(0, y0), h - lado)
+    return np.ascontiguousarray(img[y0:y0 + lado, x0:x0 + lado])
+
+
+# Recortes pequeños (p. ej. una placa que ocupa poco de la foto, ampliada en la app): el detector se entrenó con
+# placas de unos 2000 px y no ve colonias de pocos píxeles. En una foto real de la caja de iluminación con la
+# placa recortada a 420 px, encontró 413 colonias tal cual y 476-486 al ampliarla a 900-1280 px (más ya empeora).
+MIN_LADO_DETECCION = 1000
+LADO_AMPLIADO = 1280
+
+
+def enlarge_small(img: np.ndarray) -> tuple[np.ndarray, float]:
+    """Amplía las fotos con lado mayor < MIN_LADO_DETECCION. Devuelve la imagen y el factor aplicado."""
+    lado = max(img.shape[:2])
+    if not MIN_LADO_DETECCION or lado >= MIN_LADO_DETECCION:
+        return img, 1.0
+    f = LADO_AMPLIADO / lado
+    return cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_LANCZOS4), f
 
 
 def resolve_scale(image_shape, mm_per_px: float | None, plate_fraction: float | None,
@@ -539,7 +569,10 @@ async def create_analysis(
     mm_per_px: float | None = Form(None, gt=0),
     plate_fraction: float | None = Form(None, gt=0, le=1.0),
     plate_diameter_mm: float = Form(90.0, gt=0),
-    crop_square: bool = Form(False, description="Recortar el cuadrado central, el encuadre de la cámara de la app"),
+    crop_square: bool = Form(False, description="Recortar el cuadrado central (versiones anteriores de la app)"),
+    crop_x: float | None = Form(None, ge=0, le=1, description="Encuadre: borde izquierdo, fracción del ancho"),
+    crop_y: float | None = Form(None, ge=0, le=1, description="Encuadre: borde superior, fracción del alto"),
+    crop_size: float | None = Form(None, gt=0, le=1, description="Encuadre: lado del cuadrado, fracción del lado corto"),
     notes: str = Form(""),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
     store: Store = Depends(get_store),
@@ -560,17 +593,15 @@ async def create_analysis(
     img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(400, "No se pudo leer la imagen")
-    if crop_square:
-        # La cámara de la app muestra el cuadrado central de la imagen (con el círculo guía al 80 % de su lado):
-        # se guarda y analiza solo ese cuadrado. El lado corto no cambia, así que plate_fraction sigue valiendo.
-        h, w = img.shape[:2]
-        lado = min(h, w)
-        y0, x0 = (h - lado) // 2, (w - lado) // 2
-        img = np.ascontiguousarray(img[y0:y0 + lado, x0:x0 + lado])
+    if crop_size is not None or crop_square:
+        img = crop_frame(img, crop_x, crop_y, crop_size)
 
+    quality = assess(img)  # sobre los píxeles reales de la foto
+    img, f = enlarge_small(img)
     scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
-    quality = assess(img)
-    dets, species = classify_species(img, detector.detect(img), species_clf, quality["metrics"].get("plate_px"))
+    plate_px = quality["metrics"].get("plate_px")
+    dets, species = classify_species(img, detector.detect(img), species_clf, plate_px and plate_px * f,
+                                     low_res=any(i["code"] == "low_resolution" for i in quality["issues"]))
     result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
                                 volume_ml=volume_ml, species=species)
     result["quality"] = quality

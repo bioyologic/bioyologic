@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +9,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
+import 'frame_screen.dart';
 import 'result_screen.dart';
 
 /// Datos de la muestra tras hacer/elegir la foto, y envío al servidor.
@@ -18,7 +20,7 @@ class NewAnalysisScreen extends StatefulWidget {
     required this.filename,
     this.plateFraction,
     this.fromCamera = false,
-    this.cropSquare = false,
+    this.frame,
     this.projectId,
   });
 
@@ -27,8 +29,8 @@ class NewAnalysisScreen extends StatefulWidget {
   final double? plateFraction;
   final bool fromCamera;
 
-  /// Foto de la cámara de la app: se analiza solo el cuadrado central que se veía al encuadrar.
-  final bool cropSquare;
+  /// Encuadre elegido sobre la foto: solo eso se analiza.
+  final FrameCrop? frame;
   final int? projectId;
 
   @override
@@ -99,7 +101,7 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
         dilution: _dilution,
         volumeMl: _dilution == null ? null : _volumeMl,
         plateFraction: fraction,
-        cropSquare: widget.cropSquare,
+        crop: widget.frame == null ? null : (x: widget.frame!.x, y: widget.frame!.y, size: widget.frame!.size),
         plateDiameterMm: state.plateDiameterMm,
         sampleGroup: _group.text,
       );
@@ -127,9 +129,9 @@ class _NewAnalysisScreenState extends State<NewAnalysisScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                // Foto de la cámara: se ve el mismo cuadrado que se encuadró (es lo que se analiza).
-                child: widget.cropSquare
-                    ? AspectRatio(aspectRatio: 1, child: Image.memory(widget.image, fit: BoxFit.cover))
+                // Con encuadre se ve solo el cuadrado elegido: es lo que se analiza.
+                child: widget.frame != null
+                    ? AspectRatio(aspectRatio: 1, child: _FramedPreview(widget.image, widget.frame!))
                     : AspectRatio(
                         aspectRatio: 1.4,
                         child: Container(color: Colors.black, child: Image.memory(widget.image, fit: BoxFit.contain)),
@@ -254,4 +256,43 @@ class _AnalyzingOverlay extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// Muestra solo el cuadrado encuadrado de la foto.
+class _FramedPreview extends StatefulWidget {
+  const _FramedPreview(this.image, this.frame);
+  final Uint8List image;
+  final FrameCrop frame;
+
+  @override
+  State<_FramedPreview> createState() => _FramedPreviewState();
+}
+
+class _FramedPreviewState extends State<_FramedPreview> {
+  late final Future<ui.Image> _decoded = decodeImageFromList(widget.image);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<ui.Image>(
+        future: _decoded,
+        builder: (_, snap) => snap.hasData
+            ? CustomPaint(painter: _CropPainter(snap.data!, widget.frame))
+            : Container(color: Colors.black),
+      );
+}
+
+class _CropPainter extends CustomPainter {
+  _CropPainter(this.img, this.f);
+  final ui.Image img;
+  final FrameCrop f;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final iw = img.width.toDouble(), ih = img.height.toDouble();
+    final lado = f.size * (iw < ih ? iw : ih);
+    final src = Rect.fromLTWH(f.x * iw, f.y * ih, lado, lado);
+    canvas.drawImageRect(img, src, Offset.zero & size, Paint()..filterQuality = FilterQuality.medium);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropPainter old) => old.img != img || old.f != f;
 }

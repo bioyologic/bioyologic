@@ -6,10 +6,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../state/app_state.dart';
 import '../theme.dart';
+import 'frame_screen.dart';
 import 'new_analysis_screen.dart';
-
-/// Fracción del lado corto de la foto que ocupa el círculo guía.
-const guideFraction = 0.80;
 
 /// Cámara con círculo guía para encuadrar la placa.
 class CaptureScreen extends StatefulWidget {
@@ -111,8 +109,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() => _busy = true);
     try {
       final x = await c.takePicture();
-      // Se queda solo el cuadrado que muestra la vista de la cámara (el recorte lo hace el servidor).
-      await _continue(await x.readAsBytes(), 'placa.jpg', useGuide ? guideFraction : null, cropSquare: true);
+      await _continue(await x.readAsBytes(), 'placa.jpg', useGuide);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo hacer la foto')));
@@ -123,20 +120,27 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Future<void> _gallery() async {
+    final guide = AppScope.read(context).focusGuide;
     final x = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 95);
-    if (x == null) return;
-    await _continue(await x.readAsBytes(), x.name, null);
+    if (x == null || !mounted) return;
+    await _continue(await x.readAsBytes(), x.name, guide);
   }
 
-  Future<void> _continue(Uint8List bytes, String name, double? plateFraction, {bool cropSquare = false}) async {
+  /// Encuadrar la placa sobre la foto (lo que queda en el cuadro es lo que se analiza) y pasar a los datos.
+  /// Con «Repetir» se vuelve a la cámara.
+  Future<void> _continue(Uint8List bytes, String name, bool useGuide) async {
     if (!mounted) return;
+    final frame = await Navigator.of(context).push<FrameCrop>(
+        MaterialPageRoute(builder: (_) => FrameScreen(image: bytes, showCircle: useGuide)));
+    if (frame == null || !mounted) return;
     await Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => NewAnalysisScreen(
         image: bytes,
         filename: name,
-        plateFraction: plateFraction,
-        fromCamera: plateFraction != null,
-        cropSquare: cropSquare,
+        // Con el círculo guía, la placa ocupa el 80 % del encuadre: así se calcula la escala en mm.
+        plateFraction: useGuide ? guideFraction : null,
+        fromCamera: true,
+        frame: frame,
         projectId: widget.projectId,
       ),
     ));
@@ -190,7 +194,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
                         _NoCamera(message: _error!, onGallery: _gallery)
                       else
                         const Center(child: CircularProgressIndicator(color: Bio.mint)),
-                      IgnorePointer(child: CustomPaint(painter: _GuidePainter(showCircle: guide))),
+                      IgnorePointer(child: CustomPaint(painter: FramePainter(showCircle: guide))),
                     ]),
                   ),
                 ),
@@ -289,48 +293,4 @@ class _NoCamera extends StatelessWidget {
           ]),
         ),
       );
-}
-
-/// Círculo guía (80 % del lado) y esquinas de encuadre.
-class _GuidePainter extends CustomPainter {
-  _GuidePainter({required this.showCircle});
-  final bool showCircle;
-
-  @override
-  void paint(Canvas canvas, Size s) {
-    final c = s.center(Offset.zero);
-    final r = s.shortestSide * guideFraction / 2;
-    if (showCircle) {
-      final shade = Path()
-        ..fillType = PathFillType.evenOdd
-        ..addRect(Offset.zero & s)
-        ..addOval(Rect.fromCircle(center: c, radius: r));
-      canvas.drawPath(shade, Paint()..color = Colors.black.withValues(alpha: 0.35));
-      canvas.drawCircle(
-          c,
-          r,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.5
-            ..color = Bio.mint);
-    }
-    final corner = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white;
-    const m = 18.0, l = 28.0;
-    for (final (x, y, dx, dy) in [
-      (m, m, 1.0, 1.0),
-      (s.width - m, m, -1.0, 1.0),
-      (m, s.height - m, 1.0, -1.0),
-      (s.width - m, s.height - m, -1.0, -1.0),
-    ]) {
-      canvas.drawLine(Offset(x, y), Offset(x + l * dx, y), corner);
-      canvas.drawLine(Offset(x, y), Offset(x, y + l * dy), corner);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _GuidePainter old) => old.showCircle != showCircle;
 }
