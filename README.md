@@ -4,7 +4,7 @@
 
 **Pruébalo en la web:** https://bioyologic.duckdns.org · también hay app para Android (APK).
 
-Software libre bajo [AGPL-3.0-or-later](LICENSE) · [Para desarrolladores](DESARROLLO.md) · [Ficha de los modelos](MODEL_CARD.md) · [Privacidad](PRIVACIDAD.md) · [Licencias de terceros](THIRD_PARTY_LICENSES.md) · [Cómo contribuir](CONTRIBUTING.md)
+Software libre bajo [AGPL-3.0-or-later](LICENSE) · [Para desarrolladores](DESARROLLO.md) · [Ficha de los modelos](MODEL_CARD.md) · [Privacidad](PRIVACIDAD.md) · [Seguridad](SEGURIDAD.md) · [Licencias de terceros](THIRD_PARTY_LICENSES.md) · [Cómo contribuir](CONTRIBUTING.md)
 
 Proyecto de Diseño en Bioingeniería, Pontificia Universidad Javeriana · Laura Suárez · Juan José Martínez · Samuel Núñez
 

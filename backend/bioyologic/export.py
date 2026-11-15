@@ -30,6 +30,16 @@ def _n(v, d: int | None = None) -> str:
     return f"{v:.{d}f}".replace(".", ",")
 
 
+def _t(v) -> str:
+    """Texto escrito por un usuario (nombres, notas), seguro para Excel.
+
+    Excel ejecuta como fórmula cualquier celda que empiece por =, +, - o @: un nombre de muestra como
+    «=HYPERLINK(...)» podría engañar a quien abra el archivo. Esas celdas se guardan con un apóstrofo delante,
+    que Excel muestra como texto. También se quitan los saltos de línea."""
+    s = " ".join(str(v or "").split())
+    return "'" + s if s[:1] in ("=", "+", "-", "@") else s
+
+
 def _ufc(v) -> str:
     """UFC/mL como número entero (Excel lo puede sumar y graficar)."""
     return "" if v is None else f"{round(v):d}"
@@ -53,19 +63,19 @@ def build_csv(analyses: list[dict], samples: dict[tuple, dict]) -> bytes:
         muestra = samples.get((a.get("project_id"), grupo)) if grupo else None
         calidad = " | ".join(i["message"] for i in (a.get("quality") or {}).get("issues", []))
         w.writerow([
-            a.get("project_name") or "", grupo, a["sample_name"],
+            _t(a.get("project_name")), _t(grupo), _t(a["sample_name"]),
             datetime.fromisoformat(a["created_at"]).strftime("%d/%m/%Y %H:%M"),
             _n(a.get("dilution")), _n(a.get("volume_ml")), s["total"],
             corr["detected_total"] if corr else s["total"],
-            f"-{len(corr['removed'])} / +{len(corr['added'])}" if corr else "",
+            f"quitadas {len(corr['removed'])}, agregadas {len(corr['added'])}" if corr else "",
             ESTADO.get(s["status"], s["status"]), _ufc(s.get("cfu_per_ml")),
             _ufc(muestra["cfu_per_ml"]) if muestra else "", ("Sí" if muestra["estimated"] else "No") if muestra else "",
             (top["name"] if top and sp.get("identified") else "") if top else "",
             _n(100 * top["prob"], 1) if top and sp.get("identified") else "",
             _n(diam.get("mean"), 2 if unidad == "mm" else 0), unidad if diam else "",
             pred.get("form") or "", pred.get("margin") or "", pred.get("color") or "", calidad,
-            (a.get("notes") or "").replace("\r", " ").replace("\n", " "),
-            a.get("author_name") or "", REVISION.get((a.get("review") or {}).get("status"), ""),
-            (a.get("review") or {}).get("by") or "",
+            _t(a.get("notes")),
+            _t(a.get("author_name")), REVISION.get((a.get("review") or {}).get("status"), ""),
+            _t((a.get("review") or {}).get("by")),
         ])
     return ("﻿" + buf.getvalue()).encode("utf-8")

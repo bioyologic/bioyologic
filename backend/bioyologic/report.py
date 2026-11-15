@@ -8,6 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import cv2
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -133,6 +134,21 @@ def _pie(sample: str):
     return Pie
 
 
+# Lado mayor de la foto dentro del PDF. Se imprime a 12 cm de ancho: 1800 px son unos 380 ppp, más de lo que
+# da una impresora. Con la foto completa de un celular (12 MP) el informe pesaba 1,7 MB; así, unos 400 KB.
+PDF_IMG_PX = 1800
+
+
+def _foto(path: Path):
+    """La foto anotada para el PDF: reducida si es más grande de lo que se puede apreciar impresa."""
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if img is None or max(img.shape[:2]) <= PDF_IMG_PX:
+        return str(path)
+    f = PDF_IMG_PX / max(img.shape[:2])
+    img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+    return BytesIO(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tobytes())
+
+
 def build_report(analysis: dict, annotated_image: Path) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
@@ -164,7 +180,7 @@ def build_report(analysis: dict, annotated_image: Path) -> bytes:
     img_h = img_w * h / w
     if img_h > MAX_IMG_H:  # foto vertical: se limita el alto para que el resumen quepa en la primera página
         img_w, img_h = img_w * MAX_IMG_H / img_h, MAX_IMG_H
-    story += [Image(str(annotated_image), width=img_w, height=img_h), Spacer(1, 4 * mm)]
+    story += [Image(_foto(annotated_image), width=img_w, height=img_h), Spacer(1, 4 * mm)]
 
     unit = "mm" if "diameter_mm" in s["stats"] else "px"
     diam = s["stats"].get("diameter_mm") or s["stats"].get("diameter_px") or {}

@@ -18,3 +18,5 @@ def _placas_sinteticas_pequenas(monkeypatch):
     from bioyologic.api import main
     monkeypatch.setattr(quality, "PLACA_PX_MIN", 0)
     monkeypatch.setattr(main, "MIN_LADO_DETECCION", 0)  # sin ampliar: las cajas falsas están en píxeles de 600
+    # Los contadores de intentos (por IP y por cuenta) no pasan de una prueba a otra.
+    monkeypatch.setattr(main, "_hits", main.defaultdict(main.deque))

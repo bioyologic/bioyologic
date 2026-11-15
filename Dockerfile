@@ -29,4 +29,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-CMD ["uvicorn", "bioyologic.api.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+# --no-server-header: las respuestas no anuncian con qué software está hecho el servidor.
+CMD ["uvicorn", "bioyologic.api.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", \
+     "--no-server-header"]

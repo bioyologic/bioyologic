@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS analyses (
     status TEXT NOT NULL,
     notes TEXT NOT NULL DEFAULT '',
     result_json TEXT NOT NULL,
+    summary_json TEXT,              -- result_json sin las colonias: lo que necesitan los listados
     review_status TEXT NOT NULL DEFAULT '',
     reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     reviewer_name TEXT NOT NULL DEFAULT '',
@@ -109,7 +110,9 @@ MIGRATIONS = {
                  "reviewed_at": "TEXT",
                  "review_note": "TEXT NOT NULL DEFAULT ''",
                  # Papelera: fecha en que se borró (NULL = activo).
-                 "deleted_at": "TEXT"},
+                 "deleted_at": "TEXT",
+                 # Resultado sin la lista de colonias (se rellena al abrir las bases anteriores).
+                 "summary_json": "TEXT"},
 }
 
 INDEXES = """
@@ -122,6 +125,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 """
 
 IMAGE_KINDS = ("original", "annotated", "thumb")
+# La foto original se guarda a calidad 90 (se vuelve a usar al corregir el conteo). La anotada solo se mira:
+# a 85 pesa un 30 % menos (1,3 MB -> 0,9 MB en una foto de 12 MP) sin diferencia visible.
+ANNOTATED_QUALITY = [cv2.IMWRITE_JPEG_QUALITY, 85]
 SESSION_DAYS = 30
 USER_FIELDS = "id, email, name, role, institution, created_at, consent_at, consent_version, email_verified"
 CODE_ATTEMPTS = 5  # intentos por código antes de invalidarlo
@@ -135,6 +141,13 @@ _MY_PROJECTS = "(SELECT id FROM projects WHERE user_id = ? UNION SELECT project_
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _slim(result: dict) -> str:
+    """El resultado sin las listas de colonias. Una placa cargada son cientos de KB de JSON: los listados
+    (50 análisis por pantalla) leen esto en vez del resultado completo."""
+    return json.dumps({k: v for k, v in result.items() if k not in ("colonies", "detected_colonies")},
+                      ensure_ascii=False)
 
 
 def _thumbnail(img: np.ndarray, size: int = 320) -> np.ndarray:
@@ -187,6 +200,8 @@ class Store:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         for (aid,) in self._db.execute("SELECT id FROM analyses WHERE access_key IS NULL").fetchall():
             self._db.execute("UPDATE analyses SET access_key = ? WHERE id = ?", (secrets.token_urlsafe(16), aid))
+        for aid, raw in self._db.execute("SELECT id, result_json FROM analyses WHERE summary_json IS NULL").fetchall():
+            self._db.execute("UPDATE analyses SET summary_json = ? WHERE id = ?", (_slim(json.loads(raw)), aid))
         self._db.commit()
 
     def close(self) -> None:
@@ -321,6 +336,18 @@ class Store:
     def delete_session(self, token: str) -> None:
         self._exec("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
+    def purge_stale(self) -> int:
+        """Borra las sesiones y los códigos vencidos (se llama al arrancar). Devuelve cuántos."""
+        ahora, n = datetime.now().astimezone(), 0
+        for r in self._all("SELECT token_hash, expires_at FROM sessions"):
+            if datetime.fromisoformat(r["expires_at"]) < ahora:
+                n += self._exec("DELETE FROM sessions WHERE token_hash = ?", (r["token_hash"],)).rowcount
+        for r in self._all("SELECT user_id, purpose, expires_at FROM codes"):
+            if datetime.fromisoformat(r["expires_at"]) < ahora:
+                n += self._exec("DELETE FROM codes WHERE user_id = ? AND purpose = ?",
+                                (r["user_id"], r["purpose"])).rowcount
+        return n
+
     # ---------------------------------------------------------------- proyectos
     def create_project(self, user_id: int, name: str, description: str = "", target_samples: int = 10) -> dict:
         cur = self._exec(
@@ -416,16 +443,16 @@ class Store:
         s = result["summary"]
         cur = self._exec(
             """INSERT INTO analyses (user_id, access_key, project_id, sample_name, sample_group, created_at,
-                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   dilution, volume_ml, mm_per_px, total, cfu_per_ml, status, notes, result_json, summary_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, secrets.token_urlsafe(16), project_id, sample_name, sample_group.strip(),
              result.get("analyzed_at", _now()),
              dilution, volume_ml, result.get("mm_per_px"), s["total"], s["cfu_per_ml"], s["status"], notes,
-             json.dumps(result, ensure_ascii=False)))
+             json.dumps(result, ensure_ascii=False), _slim(result)))
         aid = cur.lastrowid
         q = [cv2.IMWRITE_JPEG_QUALITY, 90]
         cv2.imwrite(str(self.image_path(aid, "original")), original, q)
-        cv2.imwrite(str(self.image_path(aid, "annotated")), annotated, q)
+        cv2.imwrite(str(self.image_path(aid, "annotated")), annotated, ANNOTATED_QUALITY)
         cv2.imwrite(str(self.image_path(aid, "thumb")), _thumbnail(original), q)
         return self.get_analysis(aid, user_id)
 
@@ -439,19 +466,25 @@ class Store:
         rows = self._all("SELECT access_key FROM analyses WHERE id = ? AND user_id IS NOT NULL", (analysis_id,))
         return rows[0]["access_key"] if rows else None
 
-    _ANALYSIS_SELECT = """
-        SELECT a.*, p.name AS project_name, u.name AS author_name,
+    _ANALYSIS_FROM = """, p.name AS project_name, u.name AS author_name,
                (SELECT COUNT(*) FROM project_members m WHERE m.project_id = a.project_id) AS project_members
         FROM analyses a
         LEFT JOIN projects p ON p.id = a.project_id
         LEFT JOIN users u ON u.id = a.user_id
     """
+    _ANALYSIS_SELECT = "SELECT a.*" + _ANALYSIS_FROM
+    # Para los listados: todo menos result_json (con la lista de colonias, que puede pesar cientos de KB).
+    _LIST_SELECT = """SELECT a.id, a.user_id, a.access_key, a.project_id, a.sample_name, a.sample_group,
+               a.created_at, a.dilution, a.volume_ml, a.mm_per_px, a.total, a.cfu_per_ml, a.status, a.notes,
+               a.summary_json, a.review_status, a.reviewed_by, a.reviewer_name, a.reviewed_at, a.review_note,
+               a.deleted_at""" + _ANALYSIS_FROM
     # Visible para el usuario: suyo o de un proyecto al que entra, y fuera de la papelera (3 parámetros: user_id × 3).
     _VISIBLE = f"(a.deleted_at IS NULL AND (a.user_id = ? OR a.project_id IN {_MY_PROJECTS}))"
 
     @staticmethod
     def _decode(row: dict, with_colonies: bool) -> dict:
-        result = json.loads(row.pop("result_json"))
+        completo, resumen = row.pop("result_json", None), row.pop("summary_json", None)
+        result = json.loads(completo if with_colonies or resumen is None else resumen)
         row["summary"] = result["summary"]
         row["image_size"] = result.get("image_size")
         row["species"] = result.get("species")
@@ -476,8 +509,8 @@ class Store:
 
     def get_analysis(self, analysis_id: int, user_id: int, with_colonies: bool = True) -> dict | None:
         """Análisis propio o de un proyecto compartido con el usuario."""
-        rows = self._all(self._ANALYSIS_SELECT + f" WHERE a.id = ? AND {self._VISIBLE}",
-                         (analysis_id, user_id, user_id, user_id))
+        select = self._ANALYSIS_SELECT if with_colonies else self._LIST_SELECT
+        rows = self._all(select + f" WHERE a.id = ? AND {self._VISIBLE}", (analysis_id, user_id, user_id, user_id))
         return self._decode(rows[0], with_colonies) if rows else None
 
     def result_of(self, analysis_id: int, user_id: int) -> dict | None:
@@ -492,12 +525,13 @@ class Store:
         Quien llama comprueba antes que el usuario puede corregir. Si cambia el conteo, una aprobación
         anterior deja de valer: el análisis vuelve a quedar pendiente de revisión."""
         s = result["summary"]
-        self._exec("""UPDATE analyses SET total = ?, cfu_per_ml = ?, status = ?, result_json = ?,
+        self._exec("""UPDATE analyses SET total = ?, cfu_per_ml = ?, status = ?, result_json = ?, summary_json = ?,
                           review_status = '', reviewed_by = NULL, reviewer_name = '', reviewed_at = NULL,
                           review_note = ''
                       WHERE id = ?""",
-                   (s["total"], s["cfu_per_ml"], s["status"], json.dumps(result, ensure_ascii=False), analysis_id))
-        cv2.imwrite(str(self.image_path(analysis_id, "annotated")), annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                   (s["total"], s["cfu_per_ml"], s["status"], json.dumps(result, ensure_ascii=False), _slim(result),
+                    analysis_id))
+        cv2.imwrite(str(self.image_path(analysis_id, "annotated")), annotated, ANNOTATED_QUALITY)
         return self.get_analysis(analysis_id, user_id)
 
     def set_review(self, analysis_id: int, reviewer: dict | None, status: str, note: str = "") -> None:
@@ -541,7 +575,7 @@ class Store:
         if query:
             where.append("(a.sample_name LIKE ? OR p.name LIKE ?)")
             params += [f"%{query}%", f"%{query}%"]
-        sql = self._ANALYSIS_SELECT + " WHERE " + " AND ".join(where)
+        sql = self._LIST_SELECT + " WHERE " + " AND ".join(where)
         sql += " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
         return [self._decode(r, False) for r in self._all(sql, (*params, limit, offset))]
 
@@ -571,7 +605,7 @@ class Store:
     def list_trash(self, user_id: int) -> list[dict]:
         """Análisis borrados por el usuario, el más reciente primero."""
         self.purge_expired()
-        rows = self._all(self._ANALYSIS_SELECT + " WHERE a.user_id = ? AND a.deleted_at IS NOT NULL"
+        rows = self._all(self._LIST_SELECT + " WHERE a.user_id = ? AND a.deleted_at IS NOT NULL"
                          " ORDER BY a.deleted_at DESC, a.id DESC", (user_id,))
         out = []
         for r in rows:

@@ -10,6 +10,16 @@ services:
     volumes:
       - ./data:/data              # base de datos e imágenes (copia de seguridad: backup.sh)
     # Sin "ports": solo es accesible a través de Caddy.
+    # El proceso corre sin privilegios (usuario normal, definido en el Dockerfile) y no puede ganarlos.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: &registros           # los registros no llenan el disco: 3 archivos de 10 MB como máximo
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2.8
@@ -20,6 +30,7 @@ services:
       - "443:443"
     environment:
       BIOYOLOGIC_DOMAIN: ${BIOYOLOGIC_DOMAIN}
+    logging: *registros
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data          # certificados HTTPS

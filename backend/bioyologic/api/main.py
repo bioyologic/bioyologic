@@ -12,8 +12,11 @@ Variables de entorno:
     BIOYOLOGIC_TILE           tamaño de tile para la inferencia (0 = sin teselado)
     BIOYOLOGIC_CONF           confianza mínima del detector
     BIOYOLOGIC_MAX_UPLOAD_MB  tamaño máximo de la foto (por defecto 15)
+    BIOYOLOGIC_MAX_MEGAPIXELS megapíxeles máximos de la foto (por defecto 64)
+    BIOYOLOGIC_PARALLEL       análisis que se procesan a la vez; los demás esperan su turno (por defecto 1)
     BIOYOLOGIC_RATE_LIMIT     análisis por minuto y por IP (por defecto 20; 0 = sin límite)
     BIOYOLOGIC_LOGIN_LIMIT    intentos de inicio de sesión o registro por minuto y por IP (por defecto 10)
+    BIOYOLOGIC_LOGIN_FAILS    contraseñas incorrectas seguidas que bloquean una cuenta 15 minutos (por defecto 10)
     BIOYOLOGIC_CORS_ORIGINS   orígenes permitidos separados por comas (por defecto *)
     BIOYOLOGIC_SOURCE_URL     URL del código fuente (AGPL-3.0, sección 13)
     BIOYOLOGIC_CONTACT_EMAIL  correo del responsable del tratamiento de datos (Ley 1581 de 2012)
@@ -33,6 +36,7 @@ import logging
 import os
 import re
 import secrets
+import struct
 import threading
 import time
 import unicodedata
@@ -49,6 +53,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.datastructures import MutableHeaders
 
 from .. import __version__, mailer
 from ..analysis.counting import combine_plates
@@ -69,8 +74,12 @@ MODELS = ROOT / "models"
 DEFAULT_DATA = ROOT / "data" / "store"
 WEB_BUILD = Path(os.environ.get("BIOYOLOGIC_WEB", ROOT / "app" / "build" / "web"))
 MAX_UPLOAD_MB = float(os.environ.get("BIOYOLOGIC_MAX_UPLOAD_MB", "15"))
+MAX_MEGAPIXELS = float(os.environ.get("BIOYOLOGIC_MAX_MEGAPIXELS", "64"))
 RATE_LIMIT = int(os.environ.get("BIOYOLOGIC_RATE_LIMIT", "20"))
 LOGIN_LIMIT = int(os.environ.get("BIOYOLOGIC_LOGIN_LIMIT", "10"))
+LOGIN_FAILS = int(os.environ.get("BIOYOLOGIC_LOGIN_FAILS", "10"))
+ACCOUNT_WINDOW = 15 * 60  # segundos que cuentan los fallos y los correos pedidos por cuenta
+MAIL_LIMIT = 3            # correos con código por cuenta en ese tiempo
 SOURCE_URL = os.environ.get("BIOYOLOGIC_SOURCE_URL", "https://github.com/bioyologic/bioyologic")
 CONTACT_EMAIL = os.environ.get("BIOYOLOGIC_CONTACT_EMAIL", "")
 LICENSE = "AGPL-3.0-or-later"
@@ -84,6 +93,51 @@ app = FastAPI(title="Bioyologic API", version=__version__,
 app.add_middleware(CORSMiddleware, allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Bioyologic-Reason"],
                    allow_origins=os.environ.get("BIOYOLOGIC_CORS_ORIGINS", "*").split(","))
 
+SECURITY_HEADERS = {
+    # El navegador no adivina el tipo de un archivo: una foto subida nunca se ejecuta como página.
+    "X-Content-Type-Options": "nosniff",
+    # Nadie puede meter la app dentro de otra página para engañar con clics (clickjacking).
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    # Las URLs de fotos e informes llevan una clave secreta: no se envían a otros sitios como «Referer».
+    "Referrer-Policy": "no-referrer",
+    # La app solo usa la cámara; el resto de sensores quedan apagados.
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=(), usb=()",
+}
+# Solo cuando la petición llegó por HTTPS (detrás de Caddy): durante un año el navegador ni siquiera intenta
+# entrar por HTTP, así nadie en la misma red wifi puede interceptar la primera conexión.
+HSTS = "max-age=31536000"
+
+
+class SecurityHeaders:
+    """Añade las cabeceras de seguridad a todas las respuestas. Las respuestas que no dicen cómo guardarse en
+    caché (datos de la cuenta, análisis, informes) llevan `no-store`: no quedan copias en el navegador."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        https = any(k == b"x-forwarded-proto" and v == b"https" for k, v in scope["headers"])
+
+        async def send_with_headers(message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in SECURITY_HEADERS.items():
+                    headers.setdefault(name, value)
+                headers.setdefault("Cache-Control", "no-store")
+                if https:
+                    headers.setdefault("Strict-Transport-Security", HSTS)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeaders)
+
 
 def _default_model(stem: str) -> Path:
     """Prefiere el modelo ONNX (más ligero, sin PyTorch) si está disponible."""
@@ -96,6 +150,7 @@ def _default_model(stem: str) -> Path:
 def get_store() -> Store:
     store = Store(os.environ.get("BIOYOLOGIC_DATA", DEFAULT_DATA))
     store.purge_expired()  # lo que lleva más de 30 días en la papelera
+    store.purge_stale()    # sesiones y códigos vencidos
     return store
 
 
@@ -222,21 +277,37 @@ def _owner_only(p: dict) -> dict:
 
 
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
+_hits_lock = threading.Lock()
+_HITS_MAX = 20_000  # claves en memoria antes de limpiar las que ya no cuentan
+
+
+def _too_many(bucket: str, key: str, limit: int, window: float = 60.0, record: bool = True) -> bool:
+    """True si `key` ya llegó a `limit` eventos en los últimos `window` segundos; si no, anota uno (salvo con
+    `record=False`, que solo consulta). En memoria, por proceso."""
+    if limit <= 0:
+        return False
+    now = time.monotonic()
+    with _hits_lock:
+        if len(_hits) > _HITS_MAX:  # que nadie llene la memoria probando miles de IPs o correos
+            for k in [k for k, q in _hits.items() if not q or now - q[-1] > ACCOUNT_WINDOW]:
+                del _hits[k]
+        q = _hits[(bucket, key)]
+        while q and now - q[0] > window:
+            q.popleft()
+        if len(q) >= limit:
+            return True
+        if record:
+            q.append(now)
+        return False
 
 
 def _limit(request: Request, bucket: str, limit: int, message: str) -> None:
-    """Límite simple por IP y por tipo de petición. En memoria, por proceso."""
-    if limit <= 0:
-        return
+    """Límite simple por IP y por tipo de petición."""
     # Detrás de Caddy (deploy/Caddyfile) la IP real llega en X-Real-IP, que el proxy sobrescribe
     # siempre; X-Forwarded-For no se usa porque el cliente puede falsificarlo.
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
-    now, q = time.monotonic(), _hits[(bucket, ip)]
-    while q and now - q[0] > 60:
-        q.popleft()
-    if len(q) >= limit:
+    if _too_many(bucket, ip, limit):
         raise HTTPException(429, message)
-    q.append(now)
 
 
 def rate_limit(request: Request) -> None:
@@ -371,6 +442,9 @@ def stats(store: Store = Depends(get_store), user: dict = Depends(verified_user)
     return store.stats(user["id"])
 
 
+# Largo máximo de los textos libres (notas, descripciones): nadie guarda megas de texto en la base de datos.
+NOTES_MAX = 5000
+
 # --------------------------------------------------------------------- cuentas
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -421,6 +495,19 @@ class ResetIn(BaseModel):
 VERIFY_MINUTES = 30
 RESET_MINUTES = 15
 
+# Las contraseñas que se prueban primero en cualquier ataque.
+_FACILES = {"12345678", "123456789", "1234567890", "87654321", "password", "password1", "contraseña", "contrasena",
+            "qwertyui", "qwerty123", "1q2w3e4r", "iloveyou", "abc12345", "12341234", "123123123", "admin123",
+            "clave123", "bioyologic", "colombia", "javeriana"}
+
+
+def check_new_password(password: str, email: str = "") -> None:
+    """Rechaza las contraseñas que cualquiera adivinaría: las más comunes, un solo carácter repetido o el
+    propio correo. La longitud mínima (8) ya la exige el modelo de la petición."""
+    p = password.strip().lower()
+    if p in _FACILES or len(set(p)) <= 2 or (email and p in (email, email.split("@")[0])):
+        raise HTTPException(422, "Esa contraseña es muy fácil de adivinar. Elige otra.")
+
 
 def _session(store: Store, user: dict) -> dict:
     return {"token": store.create_session(user["id"]), "user": _user_out(user)}
@@ -440,6 +527,7 @@ def register(body: RegisterIn, tasks: BackgroundTasks, store: Store = Depends(ge
         raise HTTPException(422, "Correo electrónico no válido")
     if not body.accept_privacy:
         raise HTTPException(422, "Debes autorizar el tratamiento de tus datos para crear la cuenta")
+    check_new_password(body.password, email)
     user = store.create_user(email=email, password=body.password, name=body.name.strip(),
                              role=body.role.strip(), institution=body.institution.strip(),
                              consent_version=PRIVACY_VERSION)
@@ -452,9 +540,18 @@ def register(body: RegisterIn, tasks: BackgroundTasks, store: Store = Depends(ge
 
 @app.post("/auth/login")
 def login(body: LoginIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
-    user = store.authenticate(body.email.strip().lower(), body.password)
+    email = body.email.strip().lower()
+    # Además del límite por IP: tras varias contraseñas incorrectas la cuenta deja de aceptar intentos un
+    # rato, vengan de donde vengan (un ataque repartido entre muchas IPs no puede probar sin fin).
+    if _too_many("login-fail", email, LOGIN_FAILS, ACCOUNT_WINDOW, record=False):
+        raise HTTPException(429, "Demasiados intentos fallidos con esta cuenta. Espera 15 minutos o cambia la "
+                                 "contraseña con «¿Olvidaste tu contraseña?».")
+    user = store.authenticate(email, body.password)
     if user is None:
+        _too_many("login-fail", email, LOGIN_FAILS, ACCOUNT_WINDOW)  # anota el fallo
         raise HTTPException(401, "Correo o contraseña incorrectos")
+    with _hits_lock:
+        _hits.pop(("login-fail", email), None)
     return _session(store, user)
 
 
@@ -493,7 +590,7 @@ def resend_verification(tasks: BackgroundTasks, store: Store = Depends(get_store
                         user: dict = Depends(current_user), _: None = Depends(login_limit)) -> Response:
     if not mailer.configured():
         raise HTTPException(503, "El servidor no tiene configurado el envío de correos")
-    if not user["email_verified"]:
+    if not user["email_verified"] and not _too_many("mail", user["email"], MAIL_LIMIT, ACCOUNT_WINDOW):
         _send_code(tasks, store, user, "verify", VERIFY_MINUTES)
     return Response(status_code=204)
 
@@ -505,8 +602,10 @@ def forgot_password(body: ForgotIn, tasks: BackgroundTasks, store: Store = Depen
     if not mailer.configured():
         contacto = f" Escribe a {CONTACT_EMAIL}." if CONTACT_EMAIL else ""
         raise HTTPException(503, "La recuperación por correo no está disponible en este servidor." + contacto)
-    user = store.user_by_email(body.email.strip().lower())
-    if user is not None:
+    email = body.email.strip().lower()
+    user = store.user_by_email(email)
+    # Como mucho unos pocos correos por cuenta: nadie puede llenarle el buzón a otra persona.
+    if user is not None and not _too_many("mail", email, MAIL_LIMIT, ACCOUNT_WINDOW):
         _send_code(tasks, store, user, "reset", RESET_MINUTES)
     return Response(status_code=204)
 
@@ -514,10 +613,14 @@ def forgot_password(body: ForgotIn, tasks: BackgroundTasks, store: Store = Depen
 @app.post("/auth/password/reset")
 def reset_password(body: ResetIn, store: Store = Depends(get_store), _: None = Depends(login_limit)) -> dict:
     """Cambia la contraseña con el código del correo; cierra las demás sesiones y entra de nuevo."""
-    user = store.user_by_email(body.email.strip().lower())
+    email = body.email.strip().lower()
+    check_new_password(body.new_password, email)
+    user = store.user_by_email(email)
     if user is None or not store.check_code(user["id"], "reset", body.code):
         raise HTTPException(400, "Código incorrecto o vencido. Pide uno nuevo.")
     store.set_password(user["id"], body.new_password)
+    with _hits_lock:
+        _hits.pop(("login-fail", email), None)  # con la contraseña nueva se puede entrar enseguida
     store.set_verified(user["id"])  # quien recibió el código controla el correo
     return _session(store, store.get_user(user["id"]))
 
@@ -527,6 +630,7 @@ def change_password(body: PasswordChange, store: Store = Depends(get_store),
                     user: dict = Depends(current_user), _: None = Depends(login_limit)) -> Response:
     if store.authenticate(user["email"], body.current_password) is None:
         raise HTTPException(403, "La contraseña actual no es correcta")
+    check_new_password(body.new_password, user["email"])
     store.set_password(user["id"], body.new_password)  # cierra todas las sesiones
     return Response(status_code=204)
 
@@ -574,8 +678,62 @@ def export_data(token: str, store: Store = Depends(get_store)) -> JSONResponse:
 
 
 # --------------------------------------------------------------------- análisis
+def image_pixels(data: bytes) -> int | None:
+    """Píxeles (ancho × alto) que declara la cabecera de un JPEG o PNG, sin decodificarlo. None si no se sabe.
+
+    Un archivo pequeño puede declarar un tamaño gigantesco (una «bomba de descompresión») y agotar la memoria
+    del servidor al abrirlo: se comprueba antes."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR" and len(data) >= 24:
+        w, h = struct.unpack(">II", data[16:24])
+        return w * h
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 <= len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            m = data[i + 1]
+            if m == 0xFF:  # relleno
+                i += 1
+            elif m in (0x01, 0xD8) or 0xD0 <= m <= 0xD7:  # marcadores sin longitud
+                i += 2
+            elif m == 0xDA:  # empiezan los datos de la imagen: no hubo cabecera de tamaño
+                return None
+            elif 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):  # SOF: alto y ancho
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return w * h
+            else:
+                i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+    return None
+
+
+def decode_photo(data: bytes) -> np.ndarray:
+    """Foto subida -> imagen BGR, con los límites de tamaño."""
+    if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"Imagen demasiado grande (máx. {MAX_UPLOAD_MB:g} MB)")
+    grande = HTTPException(413, f"La foto tiene demasiados píxeles (máx. {MAX_MEGAPIXELS:g} megapíxeles)")
+    if (image_pixels(data) or 0) > MAX_MEGAPIXELS * 1e6:
+        raise grande
+    try:
+        img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    except cv2.error:  # supera el tope de OpenCV (bioyologic/__init__.py) o el archivo está dañado
+        img = None
+    if img is None:
+        raise HTTPException(400, "No se pudo leer la imagen")
+    if img.shape[0] * img.shape[1] > MAX_MEGAPIXELS * 1e6:
+        raise grande
+    return img
+
+
+# Analizar una foto ocupa todos los núcleos durante unos segundos. Se hace fuera del bucle de eventos (el
+# servidor sigue atendiendo a los demás: abrir la app, ver resultados, iniciar sesión) y de a uno: los
+# análisis que llegan a la vez esperan su turno en vez de repartirse la CPU y la memoria.
+_analysis_slots = threading.BoundedSemaphore(max(1, int(os.environ.get("BIOYOLOGIC_PARALLEL", "1"))))
+QUEUE_SECONDS = 60
+
+
 @app.post("/analyses", status_code=201)
-async def create_analysis(
+def create_analysis(
     image: UploadFile = File(..., description="Foto de la placa (JPG/PNG)"),
     sample_name: str = Form(..., min_length=1, max_length=120),
     project_id: int | None = Form(None),
@@ -589,7 +747,7 @@ async def create_analysis(
                                                                 "(fuera de 0-1 si el cuadro se sale de la foto)"),
     crop_y: float | None = Form(None, ge=-5, le=5, description="Encuadre: borde superior, fracción del alto"),
     crop_size: float | None = Form(None, gt=0, le=5, description="Encuadre: lado del cuadrado, fracción del lado corto"),
-    notes: str = Form(""),
+    notes: str = Form("", max_length=NOTES_MAX),
     sample_group: str = Form("", max_length=120, description="Muestra a la que pertenece la placa (diluciones/réplicas)"),
     store: Store = Depends(get_store),
     detector: ColonyDetector = Depends(get_detector),
@@ -603,27 +761,31 @@ async def create_analysis(
         raise HTTPException(422, "El volumen debe ser > 0")
     if project_id is not None:
         _require(store.get_project(project_id, user["id"]), "Proyecto")
-    data = await image.read()
-    if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
+    if (image.size or 0) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"Imagen demasiado grande (máx. {MAX_UPLOAD_MB:g} MB)")
-    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
-        raise HTTPException(400, "No se pudo leer la imagen")
-    if crop_size is not None or crop_square:
-        img = crop_frame(img, crop_x, crop_y, crop_size)
+    data = image.file.read()
+    if not _analysis_slots.acquire(timeout=QUEUE_SECONDS):
+        raise HTTPException(503, "El servidor está ocupado analizando otras fotos. Inténtalo de nuevo en un momento.")
+    try:
+        img = decode_photo(data)
+        del data
+        if crop_size is not None or crop_square:
+            img = crop_frame(img, crop_x, crop_y, crop_size)
 
-    quality = assess(img)  # sobre los píxeles reales de la foto
-    img, f = enlarge_small(img)
-    scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
-    plate_px = quality["metrics"].get("plate_px")
-    dets, species = classify_species(img, detector.detect(img), species_clf, plate_px and plate_px * f,
-                                     low_res=any(i["code"] == "low_resolution" for i in quality["issues"]))
-    result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
-                                volume_ml=volume_ml, species=species)
-    result["quality"] = quality
-    saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
-                               original=img, annotated=annotated, project_id=project_id,
-                               dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)
+        quality = assess(img)  # sobre los píxeles reales de la foto
+        img, f = enlarge_small(img)
+        scale = resolve_scale(img.shape, mm_per_px, plate_fraction, plate_diameter_mm)
+        plate_px = quality["metrics"].get("plate_px")
+        dets, species = classify_species(img, detector.detect(img), species_clf, plate_px and plate_px * f,
+                                         low_res=any(i["code"] == "low_resolution" for i in quality["issues"]))
+        result, annotated = analyze(img, dets, mm_per_px=scale, dilution=dilution,
+                                    volume_ml=volume_ml, species=species)
+        result["quality"] = quality
+        saved = store.add_analysis(user_id=user["id"], sample_name=sample_name.strip(), result=result,
+                                   original=img, annotated=annotated, project_id=project_id,
+                                   dilution=dilution, volume_ml=volume_ml, notes=notes, sample_group=sample_group)
+    finally:
+        _analysis_slots.release()
     return _out(store, saved, user)
 
 
@@ -633,8 +795,9 @@ def list_analyses(project_id: int | None = None, q: str = "", limit: int = 50, o
                   user: dict = Depends(verified_user)) -> list[dict]:
     """Análisis propios y de proyectos compartidos. `to_review`: los que el usuario debe revisar."""
     roles = store.roles(user["id"])
+    limit, offset = max(1, min(limit, 200)), max(0, offset)  # en SQLite un límite negativo es «sin límite»
     return [_with_urls(a, user, roles)
-            for a in store.list_analyses(user["id"], project_id, q, min(limit, 200), offset, to_review=to_review)]
+            for a in store.list_analyses(user["id"], project_id, q[:120], limit, offset, to_review=to_review)]
 
 
 @app.get("/analyses/{analysis_id}")
@@ -651,7 +814,7 @@ def _author_only(a: dict, user: dict) -> dict:
 class AnalysisPatch(BaseModel):
     sample_name: str | None = Field(None, min_length=1, max_length=120)
     sample_group: str | None = Field(None, max_length=120, description="'' = quitar de la muestra")
-    notes: str | None = None
+    notes: str | None = Field(None, max_length=NOTES_MAX)
     project_id: int | None = Field(None, description="0 = quitar del proyecto")
 
 
@@ -703,7 +866,7 @@ def correct_colonies(analysis_id: int, body: Correction, store: Store = Depends(
 
 
 class ReviewIn(BaseModel):
-    status: str = Field(..., description="aprobado | devuelto | '' (quitar la revisión)")
+    status: str = Field(..., max_length=20, description="aprobado | devuelto | '' (quitar la revisión)")
     note: str = Field("", max_length=1000)
 
 
@@ -874,7 +1037,8 @@ def csv_export(filename: str, token: str, store: Store = Depends(get_store)) -> 
         raise HTTPException(404, "Enlace caducado. Vuelve a pedirlo desde la app.")
     analyses = store.list_analyses(uid, project_id, limit=1_000_000)
     muestras = {(m["project_id"], m["name"]): m["result"] for m in _samples(store, uid, project_id)}
-    nombre = filename if filename.lower().endswith(".csv") else "bioyologic.csv"
+    # El nombre viene de la URL: se limpia igual que el del PDF antes de ponerlo en una cabecera.
+    nombre = pdf_name(filename[:-4])[:-4] + ".csv" if filename.lower().endswith(".csv") else "bioyologic.csv"
     ascii_ = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().replace('"', "") or "bioyologic.csv"
     return Response(build_csv(analyses, muestras), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=\"{ascii_}\"; filename*=UTF-8''{quote(nombre)}"})
@@ -883,13 +1047,13 @@ def csv_export(filename: str, token: str, store: Store = Depends(get_store)) -> 
 # --------------------------------------------------------------------- proyectos
 class ProjectIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    description: str = ""
+    description: str = Field("", max_length=NOTES_MAX)
     target_samples: int = Field(10, ge=1, le=10000)
 
 
 class ProjectPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
-    description: str | None = None
+    description: str | None = Field(None, max_length=NOTES_MAX)
     target_samples: int | None = Field(None, ge=1, le=10000)
 
 
@@ -926,11 +1090,11 @@ def delete_project(project_id: int, store: Store = Depends(get_store), user: dic
 # --------------------------------------------------------------------- trabajo en equipo
 class MemberIn(BaseModel):
     email: str = Field(..., max_length=254)
-    role: str = Field("analista", description="analista (cuenta placas) | revisor (además aprueba)")
+    role: str = Field("analista", max_length=20, description="analista (cuenta placas) | revisor (además aprueba)")
 
 
 class MemberPatch(BaseModel):
-    role: str
+    role: str = Field(..., max_length=20)
 
 
 def _member_out(m: dict, show_email: bool) -> dict:
@@ -986,16 +1150,21 @@ def remove_member(project_id: int, member_id: int, store: Store = Depends(get_st
 
 
 # --------------------------------------------------------------------- biblioteca
+LIBRARY_CACHE = "public, max-age=3600"  # la biblioteca es igual para todos y solo cambia con cada versión
+
+
 @app.get("/library")
-def library() -> dict:
+def library(response: Response) -> dict:
+    response.headers["Cache-Control"] = LIBRARY_CACHE
     items = [{k: v for k, v in e.items() if k != "sections"} | {"image_url": f"/library/{e['id']}/image"}
              for e in ENTRIES]
     return {"categories": CATEGORIES, "entries": items}
 
 
 @app.get("/library/{entry_id}")
-def library_entry(entry_id: str) -> dict:
+def library_entry(entry_id: str, response: Response) -> dict:
     e = _require(get_entry(entry_id), "Entrada")
+    response.headers["Cache-Control"] = LIBRARY_CACHE
     return e | {"image_url": f"/library/{entry_id}/image"}
 
 
