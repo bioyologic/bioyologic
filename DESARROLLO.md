@@ -37,7 +37,7 @@ flutter build web --base-href /app/            # el servidor la publica en /app
 flutter build apk --release --dart-define=BIOYOLOGIC_SERVER=https://bioyologic.duckdns.org
 ```
 
-**Entrenar los modelos:** abre `training/Bioyologic_entrenamiento.ipynb` (detector) o `training/Bioyologic_especies.ipynb` (especie) en Google Colab con GPU T4 y ejecuta todo. Copia los archivos que descarga en `models/`. Para el servidor, `python backend/scripts/export_onnx.py` genera los `.onnx`.
+**Entrenar los modelos:** abre `training/Bioyologic_entrenamiento.ipynb` (detector) o `training/Bioyologic_especies.ipynb` (especie) en Google Colab con GPU T4 y ejecuta todo. Copia los archivos que descarga en `models/`. Para el servidor, `python backend/scripts/export_onnx.py` genera los `.onnx`. Para entrenar con más datos (las placas corregidas en la app u otro dataset) y saber si el modelo nuevo es mejor que el actual, sigue «Reentrenar o mejorar» en [MODEL_CARD.md](MODEL_CARD.md).
 
 **Desplegar:** [`deploy/README.md`](deploy/README.md) explica la instalación en Oracle Cloud. Para actualizar el servidor desde el PC: `sh deploy/actualizar_desde_pc.sh`.
 

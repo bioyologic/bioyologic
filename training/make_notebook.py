@@ -22,6 +22,8 @@ Entrena el detector YOLO de Bioyologic con fotos **reales** de placas de Petri d
 1. `Entorno de ejecución → Cambiar tipo de entorno de ejecución → GPU T4`.
 2. `Entorno de ejecución → Ejecutar todo`. Tarda unas 2 h (descarga ≈10 min, preparación ≈10 min, entrenamiento ≤ `TIME_HOURS`).
 3. Al final se descarga **`bioyologic_detector.zip`** (`bioyologic.pt` + `bioyologic.json`): descomprímelo en `models/` y reinicia la API.
+
+**Añadir más datos (opcional).** En la celda 2, `EXTRA` acepta carpetas o `.zip` con más fotos anotadas: las placas que corregiste en la app (`python -m bioyologic.manage export-coco`) u otro dataset público. Las placas de test de los dos datasets de la tabla **no cambian** al añadir datos: la celda 8 mide el modelo nuevo y el actual sobre esas mismas placas (y sobre las nuevas) y dice si conviene reemplazarlo.
 """
 
 SETUP = """# 1. GPU y dependencias
@@ -50,7 +52,23 @@ SEED = 42
 MODEL = "yolo11s.pt"    # n = más rápido, s = equilibrio, m = más preciso
 EPOCHS = 60
 TIME_HOURS = 1.5        # límite de tiempo de entrenamiento (las sesiones gratuitas de Colab son limitadas)
-BATCH = 32"""
+BATCH = 32
+
+# --- Datos adicionales (opcional) -------------------------------------------------------------------
+# Cada entrada es una carpeta o un .zip (por ejemplo en Google Drive) con fotos anotadas, en uno de dos formatos:
+#   · COCO: un .json con "images", "annotations" y "categories", más las fotos. Es lo que genera
+#     «python -m bioyologic.manage export-coco» con las placas que corregiste en la app.
+#   · AGAR: un .json por foto con "labels" (Majchrowska et al. 2021, arXiv:2108.01234).
+# "max_plates" (opcional) limita cuántas placas se usan, al azar, para que un dataset grande no domine.
+# Antes de usar un dataset ajeno, revisa su licencia y cítalo en THIRD_PARTY_LICENSES.md.
+EXTRA = [
+    # {"name": "mi_lab", "path": "/content/drive/MyDrive/bioyologic/mi_lab.zip"},
+    # {"name": "agar", "path": "/content/drive/MyDrive/agar", "max_plates": 1500},
+]
+
+# Modelo actual de Bioyologic: al final se compara con el nuevo en las MISMAS placas de test.
+BASELINE = "https://github.com/bioyologic/bioyologic/raw/main/models/bioyologic.pt"   # "" = no comparar
+FINETUNE = False        # True: el entrenamiento parte del modelo actual (útil si solo añades pocas fotos)"""
 
 DOWNLOAD = """# 3. Descarga de los datasets
 import json, struct, urllib.request, zipfile, zlib
@@ -152,8 +170,84 @@ if USE_CLINICAL:
 
 !du -sh {RAW}/*"""
 
+EXTRAS = """# 3b. Datos adicionales (EXTRA) y modelo actual (BASELINE)
+import json, random, urllib.request, zipfile
+
+IMG_EXT = (".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
+
+def read_json(p):
+    try:
+        return json.loads(Path(p).read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+def is_coco(d):
+    return isinstance(d, dict) and {"images", "annotations", "categories"} <= d.keys()
+
+def agar_to_coco(folder, limit, seed):
+    # AGAR trae un .json por foto: {"labels": [{"class", "x", "y", "width", "height"}], "colonies_number": n}.
+    # Las placas «incontables» no tienen cajas y se descartan; las vacías (0 colonias) sí valen.
+    anns = sorted(Path(folder).rglob("*.json"))
+    random.Random(seed).shuffle(anns)
+    coco, cats = {"images": [], "annotations": [], "categories": []}, {}
+    for ann in anns:
+        if limit and len(coco["images"]) >= limit:
+            break
+        d = read_json(ann)
+        img = next((ann.with_suffix(e) for e in IMG_EXT if ann.with_suffix(e).exists()), None)
+        if img is None or not isinstance(d, dict) or "labels" not in d:
+            continue
+        if not d["labels"] and d.get("colonies_number", 0) != 0:
+            continue
+        iid = len(coco["images"]) + 1
+        coco["images"].append({"id": iid, "file_name": img.name})
+        for lb in d["labels"]:
+            cid = cats.setdefault(str(lb["class"]), len(cats) + 1)
+            coco["annotations"].append({"id": len(coco["annotations"]) + 1, "image_id": iid, "category_id": cid,
+                                        "bbox": [lb["x"], lb["y"], lb["width"], lb["height"]]})
+    coco["categories"] = [{"id": i, "name": n} for n, i in cats.items()]
+    return coco
+
+if any(str(e["path"]).startswith("/content/drive") for e in EXTRA):
+    from google.colab import drive
+    drive.mount("/content/drive")
+
+EXTRA_SOURCES = []   # (nombre, coco.json, carpeta de imágenes, máximo de placas)
+for e in EXTRA:
+    name, src = e["name"], Path(e["path"])
+    assert name not in ("base", "makrai", "clinical") and name not in [x[0] for x in EXTRA_SOURCES], \\
+        f"Nombre no válido o repetido en EXTRA: {name}"
+    assert src.exists(), f"EXTRA «{name}»: no existe {src}"
+    folder = src
+    if src.suffix.lower() == ".zip":
+        folder = RAW / "extra" / name
+        if not folder.exists():
+            with zipfile.ZipFile(src) as z:
+                z.extractall(folder)
+    coco_path = next((p for p in sorted(folder.rglob("*.json"))[:20] if is_coco(read_json(p))), None)
+    kind = "COCO"
+    if coco_path is None:
+        kind = "AGAR"
+        coco = agar_to_coco(folder, e.get("max_plates"), SEED)
+        assert coco["images"], f"EXTRA «{name}»: en {src} no hay fotos anotadas en formato COCO ni AGAR"
+        coco_path = RAW / "extra" / f"{name}_coco.json"
+        coco_path.parent.mkdir(parents=True, exist_ok=True)
+        coco_path.write_text(json.dumps(coco), encoding="utf-8")
+    EXTRA_SOURCES.append((name, coco_path, folder, e.get("max_plates")))
+    print(f"EXTRA «{name}»: formato {kind}, {len(read_json(coco_path)['images'])} fotos anotadas")
+if not EXTRA:
+    print("Sin datos adicionales: se entrena solo con los datasets base.")
+
+BASELINE_PT = None
+if BASELINE:
+    BASELINE_PT = Path(BASELINE) if Path(BASELINE).exists() else WORK / ("actual_" + BASELINE.split("/")[-1])
+    if not BASELINE_PT.exists():
+        urllib.request.urlretrieve(BASELINE, BASELINE_PT)
+    print("Modelo actual para comparar:", BASELINE_PT.name, f"({BASELINE_PT.stat().st_size / 1e6:.0f} MB)")"""
+
 CONVERT = """# 4. Conversión COCO → YOLO con teselado
 import json, random, shutil
+from concurrent.futures import ThreadPoolExecutor
 import cv2
 import numpy as np
 
@@ -165,33 +259,47 @@ def tile_starts(length, tile, overlap):
     starts.append(length - tile)
     return starts
 
-# Cada muestra: (ruta de la imagen, [(nombre_clase, x, y, w, h), ...])
-samples = []
-for src_name, coco_path, img_dir in SOURCES:
-    coco = json.loads(Path(coco_path).read_text())
+def load_coco(src_name, coco_path, img_dir):
+    # Cada muestra: (ruta de la imagen, [(nombre_clase, x, y, w, h), ...])
+    coco = json.loads(Path(coco_path).read_text(encoding="utf-8"))
     cats = {c["id"]: f"{src_name}:{c['name']}" for c in coco["categories"]}
     index = {p.name: p for p in Path(img_dir).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")}
     boxes = {}
     for a in coco["annotations"]:
         boxes.setdefault(a["image_id"], []).append((cats[a["category_id"]], *a["bbox"]))
-    found = 0
-    for im in coco["images"]:
-        path = index.get(Path(im["file_name"]).name)
-        if path is not None:
-            samples.append((path, boxes.get(im["id"], [])))
-            found += 1
-    print(f"{src_name}: {found}/{len(coco['images'])} imágenes, {sum(len(v) for v in boxes.values())} colonias")
+    out = [(index[Path(im["file_name"]).name], boxes.get(im["id"], []))
+           for im in coco["images"] if Path(im["file_name"]).name in index]
+    print(f"{src_name}: {len(out)}/{len(coco['images'])} imágenes, {sum(len(b) for _, b in out)} colonias")
+    return out
 
-names = ["colony"] if CLASS_MODE == "single" else sorted({b[0] for _, bs in samples for b in bs})
+def split(items):
+    n = len(items)
+    n_tr, n_va = int(n * SPLIT[0]), int(n * SPLIT[1])
+    return {"train": items[:n_tr], "val": items[n_tr:n_tr + n_va], "test": items[n_tr + n_va:]}
+
+samples = []
+for src_name, coco_path, img_dir in SOURCES:
+    samples += load_coco(src_name, coco_path, img_dir)
+# Los datasets base se reparten SIEMPRE igual (misma semilla, sin mezclarlos con los datos adicionales):
+# su test son las mismas placas con las que se midió el modelo actual, que nunca las vio al entrenar.
+random.Random(SEED).shuffle(samples)
+parts = split(samples)
+TEST_BASE, TEST_EXTRA, SUBSET = list(parts["test"]), {}, {}
+for src_name, coco_path, img_dir, limit in EXTRA_SOURCES:
+    items = load_coco(src_name, coco_path, img_dir)
+    random.Random(SEED).shuffle(items)
+    items = items[:limit] if limit else items
+    extra = split(items)
+    for part in parts:
+        parts[part] = parts[part] + extra[part]
+    TEST_EXTRA[src_name] = extra["test"]
+    SUBSET.update({path: src_name for path, _ in items})
+
+names = ["colony"] if CLASS_MODE == "single" else sorted({b[0] for items in parts.values() for _, bs in items for b in bs})
 cls_index = {n: i for i, n in enumerate(names)}
 
 def cls_of(name):
     return 0 if CLASS_MODE == "single" else cls_index[name]
-
-random.Random(SEED).shuffle(samples)
-n = len(samples)
-n_tr, n_va = int(n * SPLIT[0]), int(n * SPLIT[1])
-parts = {"train": samples[:n_tr], "val": samples[n_tr:n_tr + n_va], "test": samples[n_tr + n_va:]}
 
 shutil.rmtree(DATASET, ignore_errors=True)
 
@@ -199,14 +307,16 @@ def convert(item, part):
     path, bxs = item
     img = cv2.imread(str(path))
     if img is None:
-        return 0, 0
+        return 0, 0, []
     scale = min(1.0, MAX_SIDE / max(img.shape[:2]))
     if scale < 1:
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     boxes = [(cls_of(c), x * scale, y * scale, (x + w) * scale, (y + h) * scale) for c, x, y, w, h in bxs]
     H, W = img.shape[:2]
     stem = f"{path.parent.name}_{path.stem}"
-    n_tiles = n_boxes = 0
+    if path in SUBSET:   # dos fuentes adicionales pueden traer archivos con el mismo nombre
+        stem = f"{SUBSET[path]}_{stem}"
+    n_boxes, files = 0, []
     for y0 in tile_starts(H, TILE, OVERLAP):
         for x0 in tile_starts(W, TILE, OVERLAP):
             crop = img[y0:y0 + TILE, x0:x0 + TILE]
@@ -224,23 +334,34 @@ def convert(item, part):
             name = f"{stem}_{x0}_{y0}"
             cv2.imwrite(str(DATASET / "images" / part / f"{name}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
             (DATASET / "labels" / part / f"{name}.txt").write_text("\\n".join(lines))
-            n_tiles += 1
+            files.append(str(DATASET / "images" / part / f"{name}.jpg"))
             n_boxes += len(lines)
-    return n_tiles, n_boxes
+    return len(files), n_boxes, files
 
-summary = {}
+summary, test_files = {}, {}
 for part, items in parts.items():
     (DATASET / "images" / part).mkdir(parents=True)
     (DATASET / "labels" / part).mkdir(parents=True)
     with ThreadPoolExecutor(4) as pool:
         res = list(pool.map(lambda it: convert(it, part), items))
     summary[part] = {"placas": len(items), "teselas": sum(r[0] for r in res), "cajas": sum(r[1] for r in res)}
+    if part == "test":
+        for (path, _), r in zip(items, res):
+            test_files.setdefault(SUBSET.get(path, "base"), []).extend(r[2])
 
-(DATASET / "data.yaml").write_text(
-    f"path: {DATASET}\\ntrain: images/train\\nval: images/val\\ntest: images/test\\n"
-    + "names:\\n" + "".join(f"  {i}: '{nm}'\\n" for i, nm in enumerate(names)))
+def write_yaml(file, test):
+    (DATASET / file).write_text(
+        f"path: {DATASET.as_posix()}\\ntrain: images/train\\nval: images/val\\ntest: {test}\\n"
+        + "names:\\n" + "".join(f"  {i}: '{nm}'\\n" for i, nm in enumerate(names)))
+
+write_yaml("data.yaml", "images/test")
+# Una lista de teselas de test por origen: la celda 8 mide cada uno por separado.
+for subset, files in test_files.items():
+    (DATASET / f"test_{subset}.txt").write_text("\\n".join(files))
+    write_yaml(f"data_{subset}.yaml", f"test_{subset}.txt")
 TEST_SAMPLES = parts["test"]
-print(json.dumps(summary, indent=2, ensure_ascii=False))"""
+print(json.dumps(summary, indent=2, ensure_ascii=False))
+print("Placas de test:", {"base": len(TEST_BASE), **{k: len(v) for k, v in TEST_EXTRA.items()}})"""
 
 PREVIEW = """# 5. Comprobación visual de algunas teselas con sus etiquetas
 import matplotlib.pyplot as plt
@@ -263,7 +384,7 @@ plt.show()"""
 TRAIN = """# 6. Entrenamiento
 from ultralytics import YOLO
 
-model = YOLO(MODEL)
+model = YOLO(str(BASELINE_PT) if FINETUNE and BASELINE_PT is not None and CLASS_MODE == "single" else MODEL)
 model.train(
     data=str(DATASET / "data.yaml"), epochs=EPOCHS, time=TIME_HOURS, imgsz=TILE, batch=BATCH,
     patience=15, workers=2, project=str(WORK / "runs"), name="bioyologic", exist_ok=True, cos_lr=True,
@@ -312,31 +433,105 @@ def count_colonies(model, img, conf=0.25):
                 dets.append((x1 + ox, y1 + oy, x2 + ox, y2 + oy, float(c)))
     return len(merge(dets)) if len(offs) > 1 else len(dets)
 
+def count_errors(model, plates, conf=0.25):
+    rows = []
+    for path, bxs in plates:
+        img = cv2.imread(str(path))
+        if img is not None:
+            rows.append((f"{path.parent.name}/{path.name}", len(bxs), count_colonies(model, img, conf)))
+    true = np.array([r[1] for r in rows], float)
+    pred = np.array([r[2] for r in rows], float)
+    err, nz = pred - true, true > 0
+    return {"placas": len(rows), "rows": rows, "true": true, "pred": pred,
+            "MAE": float(np.abs(err).mean()) if rows else 0.0,
+            "RMSE": float(np.sqrt((err ** 2).mean())) if rows else 0.0,
+            "sesgo": float(err.mean()) if rows else 0.0,
+            "MAPE": float(100 * np.abs(err[nz] / true[nz]).mean()) if nz.any() else 0.0}
+
 best_model = YOLO(str(BEST))
-rows = []
-for path, bxs in TEST_SAMPLES:
-    img = cv2.imread(str(path))
-    if img is not None:
-        rows.append((f"{path.parent.name}/{path.name}", len(bxs), count_colonies(best_model, img)))
-true = np.array([r[1] for r in rows], float)
-pred = np.array([r[2] for r in rows], float)
-err = pred - true
-nz = true > 0
+res = count_errors(best_model, TEST_SAMPLES)
+rows, true, pred = res["rows"], res["true"], res["pred"]
 print(f"Placas de test: {len(rows)}")
-print(f"MAE  {np.abs(err).mean():.2f} colonias | RMSE {np.sqrt((err ** 2).mean()):.2f} | sesgo {err.mean():+.2f}")
-if nz.any():
-    print(f"MAPE {100 * np.abs(err[nz] / true[nz]).mean():.1f} %")
+print(f"MAE  {res['MAE']:.2f} colonias | RMSE {res['RMSE']:.2f} | sesgo {res['sesgo']:+.2f}")
+if (true > 0).any():
+    print(f"MAPE {res['MAPE']:.1f} %")
 if len(rows) > 1 and true.std() > 0 and pred.std() > 0:
     print(f"Pearson r = {np.corrcoef(true, pred)[0, 1]:.4f}")
 for name, t, p in sorted(rows, key=lambda r: -abs(r[2] - r[1]))[:5]:
     print(f"  {name}: real {t}  predicho {p}")"""
 
-EXPORT = """# 8. Exportar el modelo para Bioyologic
+COMPARE = """# 8. ¿Conviene reemplazar el modelo actual? Los dos se miden sobre las mismas placas de test
+TOL_MAPE = 0.3    # puntos de MAPE que el nuevo puede perder en las placas base (ruido entre entrenamientos)
+TOL_MAP = 0.005   # ídem para mAP50
+
+def measure(weights, subset, plates):
+    m = YOLO(str(weights))
+    v = m.val(data=str(DATASET / f"data_{subset}.yaml"), split="test", imgsz=TILE, plots=False, verbose=False,
+              project=str(WORK / "runs"), name="comparacion", exist_ok=True)
+    c = count_errors(m, plates)
+    return {"placas": c["placas"], "mAP50": round(float(v.box.map50), 4), "precision": round(float(v.box.mp), 4),
+            "recall": round(float(v.box.mr), 4), "MAE": round(c["MAE"], 2), "MAPE": round(c["MAPE"], 2),
+            "sesgo": round(c["sesgo"], 2)}
+
+COMPARISON, VERDICT = {}, None
+if BASELINE_PT is None or CLASS_MODE != "single":
+    print("No se compara: BASELINE está vacío o CLASS_MODE no es 'single'.")
+else:
+    for subset, plates in {"base": TEST_BASE, **TEST_EXTRA}.items():
+        if plates:
+            COMPARISON[subset] = {"actual": measure(BASELINE_PT, subset, plates),
+                                  "nuevo": measure(BEST, subset, plates)}
+    print(f"{'Test':<14}{'Modelo':<8}{'Placas':>7}{'mAP50':>8}{'P':>7}{'R':>7}{'MAE':>7}{'MAPE %':>8}{'Sesgo':>7}")
+    for subset, r in COMPARISON.items():
+        for who in ("actual", "nuevo"):
+            m = r[who]
+            print(f"{subset:<14}{who:<8}{m['placas']:>7}{m['mAP50']:>8.3f}{m['precision']:>7.3f}{m['recall']:>7.3f}"
+                  f"{m['MAE']:>7.2f}{m['MAPE']:>8.1f}{m['sesgo']:>+7.2f}")
+
+    # Regla: el nuevo no puede contar ni detectar peor en las placas base y, si hay datos nuevos, tiene que
+    # contar mejor en ellos. Sin datos nuevos, tiene que mejorar el conteo en las placas base.
+    reasons, notes = [], []
+    base = COMPARISON.get("base")
+    extras = {k: v for k, v in COMPARISON.items() if k != "base"}
+    if not COMPARISON:
+        reasons.append("no hay placas de test con las que comparar")
+    if base:
+        a, n = base["actual"], base["nuevo"]
+        if n["MAPE"] > a["MAPE"] + TOL_MAPE:
+            reasons.append(f"cuenta peor en las placas base (MAPE {a['MAPE']:.1f} % → {n['MAPE']:.1f} %)")
+        if n["mAP50"] < a["mAP50"] - TOL_MAP:
+            reasons.append(f"detecta peor en las placas base (mAP50 {a['mAP50']:.3f} → {n['mAP50']:.3f})")
+        if not extras and n["MAPE"] >= a["MAPE"]:
+            reasons.append("sin datos nuevos, tampoco mejora el conteo en las placas base")
+    for subset, r in extras.items():
+        a, n = r["actual"], r["nuevo"]
+        if n["MAE"] >= a["MAE"]:
+            reasons.append(f"no cuenta mejor en «{subset}» (MAE {a['MAE']:.2f} → {n['MAE']:.2f} colonias)")
+        if n["placas"] < 10:
+            notes.append(f"«{subset}» solo tiene {n['placas']} placa(s) de test: su resultado es poco fiable")
+    for src in EXTRA_SOURCES:
+        if not TEST_EXTRA.get(src[0]):
+            notes.append(f"«{src[0]}» tiene tan pocas placas que ninguna quedó para test")
+    VERDICT = "conservar" if reasons else "reemplazar"
+    print()
+    if VERDICT == "reemplazar":
+        print("✅ El modelo NUEVO es mejor: se puede reemplazar el actual.")
+    else:
+        print("❌ CONSERVA el modelo actual. El nuevo:")
+        for r in reasons:
+            print("   ·", r)
+    for n in notes:
+        print("⚠️", n)
+    (WORK / "comparacion.json").write_text(json.dumps(
+        {"veredicto": VERDICT, "motivos": reasons, "avisos": notes, "resultados": COMPARISON},
+        indent=2, ensure_ascii=False), encoding="utf-8")"""
+
+EXPORT = """# 9. Exportar el modelo para Bioyologic
 out_pt = WORK / "bioyologic.pt"
 shutil.copy(BEST, out_pt)
 (WORK / "bioyologic.json").write_text(json.dumps({
     "max_side": MAX_SIDE, "tile": TILE, "imgsz": TILE, "classes": names,
-    "datasets": [s[0] for s in SOURCES],
+    "datasets": [s[0] for s in SOURCES] + [s[0] for s in EXTRA_SOURCES],
 }, indent=2))
 # Un solo archivo: Chrome bloquea las descargas múltiples automáticas.
 import zipfile
@@ -344,6 +539,10 @@ bundle = WORK / "bioyologic_detector.zip"
 with zipfile.ZipFile(bundle, "w") as z:
     z.write(out_pt, out_pt.name)
     z.write(WORK / "bioyologic.json", "bioyologic.json")
+    if (WORK / "comparacion.json").exists():
+        z.write(WORK / "comparacion.json", "comparacion.json")
+if VERDICT == "conservar":
+    print("⚠️ Este modelo NO superó al actual (celda 8): no lo copies a models/. Se descarga solo para revisarlo.")
 try:
     from google.colab import files
     files.download(str(bundle))
@@ -351,12 +550,19 @@ except ImportError:
     print("Copia manualmente:", bundle)"""
 
 OUTRO = """## Siguiente paso
-Copia `bioyologic.pt` y `bioyologic.json` en `Bioyologic/models/` (sustituyendo los anteriores) y reinicia la API. La app usará el nuevo modelo sin más cambios.
+**Solo si la celda 8 dice que el modelo nuevo es mejor** (o si no había modelo actual con el que comparar):
+
+1. Copia `bioyologic.pt` y `bioyologic.json` en `Bioyologic/models/`, sustituyendo los anteriores.
+2. Ejecuta `python backend/scripts/export_onnx.py` (el servidor usa la versión ONNX) y las pruebas del backend.
+3. Actualiza las cifras de `MODEL_CARD.md` y del `README.md` con las de `comparacion.json`, y añade los datos nuevos a `THIRD_PARTY_LICENSES.md` si son de terceros.
+4. Sube el cambio y actualiza el servidor.
+
+Si la celda 8 dice que conserves el modelo actual, no cambies nada: el modelo nuevo cuenta peor en alguna parte.
 
 *Opcional:* `CLASS_MODE = "species"` entrena una clase por especie (43 en total). Con 15–50 placas por especie el conteo es bueno, pero la clasificación por especie será limitada."""
 
-CELLS = [("markdown", INTRO), ("code", SETUP), ("code", CONFIG), ("code", DOWNLOAD),
-         ("code", CONVERT), ("code", PREVIEW), ("code", TRAIN), ("code", EVAL),
+CELLS = [("markdown", INTRO), ("code", SETUP), ("code", CONFIG), ("code", DOWNLOAD), ("code", EXTRAS),
+         ("code", CONVERT), ("code", PREVIEW), ("code", TRAIN), ("code", EVAL), ("code", COMPARE),
          ("code", EXPORT), ("markdown", OUTRO)]
 
 

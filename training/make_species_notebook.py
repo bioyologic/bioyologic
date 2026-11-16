@@ -23,6 +23,8 @@ Datos: los mismos dos datasets públicos (Makrai *et al.* 2023 y el dataset clí
 **Cómo usarlo**: `Entorno de ejecución → Cambiar tipo → GPU T4` y `Ejecutar todo` (~1,5 h). Al final se descarga `bioyologic_species.zip` (modelo + configuración): descomprímelo en `models/`.
 
 **Advertencia**: en estos datasets cada placa tiene una sola especie y cada especie se cultivó en su propio medio (sangre, MacConkey, etc.). El clasificador puede apoyarse en el color del agar además de en la colonia. Con fotos de otro laboratorio, la especie es orientativa y debe confirmarse con pruebas microbiológicas.
+
+**Añadir más datos (opcional).** En la celda 2, `EXTRA` acepta carpetas o `.zip` con placas de especie conocida (por ejemplo, las de tu laboratorio exportadas con `python -m bioyologic.manage export-coco --especie "…"`). Es la forma de reducir el sesgo del medio de cultivo: las mismas especies en otros agares, con otras cámaras. Las placas de test de los dos datasets públicos **no cambian**: la celda 8 mide el clasificador nuevo y el actual sobre las mismas placas y dice si conviene reemplazarlo.
 """
 
 CONFIG = f"""# 2. Configuración
@@ -51,6 +53,27 @@ BATCH = 256
 # código de cada dataset -> especie (tablas 1 de ambos artículos)
 SPECIES_MAP = {json.dumps(SPECIES_MAP["codes"], ensure_ascii=False)}"""
 
+CONFIG += """
+
+# --- Datos adicionales (opcional): mismos formatos que en el notebook del detector (COCO o AGAR) -------
+# Aquí cada foto necesita su ESPECIE: la categoría de sus anotaciones debe ser el nombre científico
+# («Escherichia coli») o traducirse con "species". Con las placas de la app, expórtalas así:
+#   python -m bioyologic.manage export-coco --email TU_CORREO --proyecto "E. coli" --especie "Escherichia coli"
+# Solo se usan placas con una única especie (en una placa mixta no se sabe cuál es cada colonia).
+# Antes de usar un dataset ajeno, revisa su licencia y cítalo en THIRD_PARTY_LICENSES.md.
+EXTRA = [
+    # {"name": "mi_lab", "path": "/content/drive/MyDrive/bioyologic/ecoli_mi_lab.zip"},
+    # {"name": "agar", "path": "/content/drive/MyDrive/agar", "max_plates": 1500,
+    #  "species": {"E.coli": "Escherichia coli", "S.aureus": "Staphylococcus aureus"}},
+]
+# Gram ("+" o "-") y medio de las especies NUEVAS, para mostrarlos en la app (las actuales ya los tienen).
+EXTRA_INFO = {
+    # "Nombre científico": {"gram": "+", "agar": "blood"},
+}
+
+# Clasificador actual de Bioyologic: al final se compara con el nuevo en las MISMAS placas de test.
+BASELINE = "https://github.com/bioyologic/bioyologic/raw/main/models/bioyologic_species.pt"   # "" = no comparar"""
+
 CROPS = """# 4. Recortes de colonias por especie (partición por placa dentro de cada especie)
 import json, random, shutil
 from collections import defaultdict
@@ -68,34 +91,80 @@ def square_crop(img, box, pad=PAD):
     crop = img[b:d, a:c]
     return cv2.resize(crop, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA) if crop.size else None
 
-plates = defaultdict(list)   # especie -> [(ruta, [cajas])]
-for src_name, coco_path, img_dir in SOURCES:
-    coco = json.loads(Path(coco_path).read_text())
-    cats = {c["id"]: SPECIES_MAP[f"{src_name}:{c['name']}"]["species"] for c in coco["categories"]}
+def load_plates(coco_path, img_dir, species_of, pure_only=False):
+    # especie -> [(ruta, [cajas])]. La especie de la placa es la de la mayoría de sus colonias.
+    coco = json.loads(Path(coco_path).read_text(encoding="utf-8"))
+    cats = {c["id"]: species_of(c["name"]) for c in coco["categories"]}
     index = {p.name: p for p in Path(img_dir).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")}
     by_img = defaultdict(list)
     for a in coco["annotations"]:
         x, y, w, h = a["bbox"]
         if max(w, h) >= MIN_BOX:
             by_img[a["image_id"]].append((cats[a["category_id"]], (x, y, x + w, y + h)))
+    out, mixed = defaultdict(list), 0
     for im in coco["images"]:
         path = index.get(Path(im["file_name"]).name)
         boxes = by_img.get(im["id"], [])
         if path is None or not boxes:
             continue
-        sp = max(set(b[0] for b in boxes), key=lambda s: sum(1 for b in boxes if b[0] == s))
-        plates[sp].append((path, [b[1] for b in boxes]))
+        kinds = sorted(set(b[0] for b in boxes))
+        if pure_only and len(kinds) > 1:
+            mixed += 1
+            continue
+        sp = max(kinds, key=lambda s: sum(1 for b in boxes if b[0] == s))
+        out[sp].append((path, [b[1] for b in boxes]))
+    if mixed:
+        print(f"  {mixed} placas mixtas descartadas")
+    return out
 
-rng = random.Random(SEED)
-parts = {"train": [], "val": [], "test": []}
-for sp, items in sorted(plates.items()):
-    rng.shuffle(items)
-    n = len(items)
-    n_te = max(1, round(n * SPLIT[2])) if n >= 3 else 0
-    n_va = max(1, round(n * SPLIT[1])) if n >= 3 else 0
-    parts["test"] += [(sp, it) for it in items[:n_te]]
-    parts["val"] += [(sp, it) for it in items[n_te:n_te + n_va]]
-    parts["train"] += [(sp, it) for it in items[n_te + n_va:]]
+def split_species(found, rng):
+    out = {"train": [], "val": [], "test": []}
+    for sp, items in sorted(found.items()):
+        rng.shuffle(items)
+        n = len(items)
+        n_te = max(1, round(n * SPLIT[2])) if n >= 3 else 0
+        n_va = max(1, round(n * SPLIT[1])) if n >= 3 else 0
+        out["test"] += [(sp, it) for it in items[:n_te]]
+        out["val"] += [(sp, it) for it in items[n_te:n_te + n_va]]
+        out["train"] += [(sp, it) for it in items[n_te + n_va:]]
+    return out
+
+plates = defaultdict(list)   # especie -> [(ruta, [cajas])]
+for src_name, coco_path, img_dir in SOURCES:
+    found = load_plates(coco_path, img_dir, lambda cat, src=src_name: SPECIES_MAP[f"{src}:{cat}"]["species"])
+    for sp, items in found.items():
+        plates[sp] += items
+# Los datasets base se reparten SIEMPRE igual (misma semilla, sin mezclarlos con los datos adicionales):
+# su test son las mismas placas con las que se midió el clasificador actual, que nunca las vio al entrenar.
+parts = split_species(plates, random.Random(SEED))
+TEST_BASE, TEST_EXTRA, PREFIX = list(parts["test"]), {}, {}
+KNOWN = {v["species"] for v in SPECIES_MAP.values()}
+for src_name, coco_path, img_dir, limit in EXTRA_SOURCES:
+    table = next(e for e in EXTRA if e["name"] == src_name).get("species", {})
+    def species_of(cat, table=table, src=src_name):
+        sp = table.get(cat, cat)
+        assert sp.lower() != "colony", (f"EXTRA «{src}» no dice la especie de sus fotos: expórtalas con --especie "
+                                        'o añade "species": {"colony": "Nombre científico"} a su entrada')
+        return sp
+    found = load_plates(coco_path, img_dir, species_of, pure_only=True)
+    if limit:   # como mucho `limit` placas, al azar
+        flat = [(sp, it) for sp, items in sorted(found.items()) for it in items]
+        random.Random(SEED).shuffle(flat)
+        found = defaultdict(list)
+        for sp, it in flat[:limit]:
+            found[sp].append(it)
+    for sp, items in sorted(found.items()):
+        if sp not in KNOWN:
+            print(f"⚠️ «{src_name}»: especie nueva «{sp}» ({len(items)} placas). Si es otro nombre de una especie "
+                  'que ya existe, tradúcelo con "species".')
+        assert sp in plates or len(items) >= 3, \\
+            f"«{src_name}»: de una especie nueva ({sp}) hacen falta al menos 3 placas"
+    extra = split_species(found, random.Random(SEED))
+    for part in parts:
+        parts[part] = parts[part] + extra[part]
+    TEST_EXTRA[src_name] = extra["test"]
+    PREFIX.update({it[0]: src_name for items in found.values() for it in items})
+    print(f"EXTRA «{src_name}»: {sum(len(v) for v in found.values())} placas de {len(found)} especies")
 
 shutil.rmtree(DATASET, ignore_errors=True)
 
@@ -108,11 +177,13 @@ def export(args):
         boxes = random.Random(str(path)).sample(boxes, MAX_PER_PLATE)
     folder = DATASET / part / sp.replace(" ", "_")
     folder.mkdir(parents=True, exist_ok=True)
+    # dos fuentes adicionales pueden traer archivos con el mismo nombre
+    stem = f"{PREFIX[path]}_{path.stem}" if path in PREFIX else path.stem
     n = 0
     for k, b in enumerate(boxes):
         crop = square_crop(img, b)
         if crop is not None:
-            cv2.imwrite(str(folder / f"{path.stem}_{k}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            cv2.imwrite(str(folder / f"{stem}_{k}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
             n += 1
     return n
 
@@ -122,8 +193,9 @@ for part, items in parts.items():
         counts = list(pool.map(export, [(part, sp, it) for sp, it in items]))
     summary[part] = {"placas": len(items), "recortes": sum(counts)}
 TEST_PLATES = parts["test"]
-CLASSES = sorted(plates)
+CLASSES = sorted({sp for items in parts.values() for sp, _ in items})
 print(json.dumps(summary, indent=2, ensure_ascii=False))
+print("Placas de test:", {"base": len(TEST_BASE), **{k: len(v) for k, v in TEST_EXTRA.items()}})
 print(len(CLASSES), "especies:", ", ".join(CLASSES))"""
 
 PREVIEW = """# 5. Un recorte de ejemplo por especie
@@ -153,31 +225,106 @@ print(f"TEST por colonia: top-1 = {m.top1:.3f} · top-5 = {m.top5:.3f}")"""
 
 EVAL = """# 7. Precisión por PLACA: votación entre las colonias de cada placa de test
 from collections import Counter
-clf = YOLO(str(BEST))
-names = clf.names
-ok, rows = 0, []
-for sp, (path, boxes) in TEST_PLATES:
-    img = cv2.imread(str(path))
-    crops = [c for c in (square_crop(img, b) for b in boxes[:MAX_PER_PLATE]) if c is not None]
-    probs = np.zeros(len(names))
-    for i in range(0, len(crops), 128):
-        for r in clf.predict(crops[i:i + 128], imgsz=IMGSZ, verbose=False):
-            probs += r.probs.data.cpu().numpy()
-    pred = names[int(probs.argmax())].replace("_", " ")
-    ok += pred == sp
-    rows.append((sp, pred, probs.max() / max(1, len(crops))))
-print(f"Placas de test: {len(rows)} · especie correcta en {ok} ({100 * ok / len(rows):.1f} %)")
+
+def evaluate_species(weights, test_plates):
+    clf = YOLO(str(weights))
+    labels = {i: n.replace("_", " ") for i, n in clf.names.items()}
+    rows, ok_cols, n_cols = [], 0, 0
+    for sp, (path, boxes) in test_plates:
+        img = cv2.imread(str(path))
+        if img is None:
+            continue
+        crops = [c for c in (square_crop(img, b) for b in boxes[:MAX_PER_PLATE]) if c is not None]
+        if not crops:
+            continue
+        probs = np.zeros(len(labels))
+        for i in range(0, len(crops), 128):
+            for r in clf.predict(crops[i:i + 128], imgsz=IMGSZ, verbose=False):
+                p = r.probs.data.cpu().numpy()
+                probs += p
+                ok_cols += int(labels[int(p.argmax())] == sp)
+        n_cols += len(crops)
+        rows.append((sp, labels[int(probs.argmax())], float(probs.max()) / len(crops)))
+    return {"placas": len(rows), "placas_ok": sum(t == p for t, p, _ in rows), "colonias": n_cols,
+            "top1": round(ok_cols / max(1, n_cols), 4), "rows": rows}
+
+names = YOLO(str(BEST)).names
+res = evaluate_species(BEST, TEST_PLATES)
+rows, ok = res["rows"], res["placas_ok"]
+print(f"Placas de test: {len(rows)} · especie correcta en {ok} ({100 * ok / max(1, len(rows)):.1f} %)")
+print(f"Acierto por colonia en esas placas: {100 * res['top1']:.1f} %")
 errors = Counter((t, p) for t, p, _ in rows if t != p)
 for (t, p), n in errors.most_common(10):
     print(f"  {t} → confundida con {p} ({n} placa{'s' if n > 1 else ''})")"""
 
-EXPORT = """# 8. Exportar para Bioyologic
+COMPARE = """# 8. ¿Conviene reemplazar el clasificador actual? Los dos se miden sobre las mismas placas de test
+TOL_TOP1 = 0.005   # acierto por colonia que el nuevo puede perder en las placas base (ruido entre entrenamientos)
+
+COMPARISON, VERDICT = {}, None
+if BASELINE_PT is None:
+    print("No se compara: BASELINE está vacío.")
+else:
+    for subset, test_plates in {"base": TEST_BASE, **TEST_EXTRA}.items():
+        if test_plates:
+            COMPARISON[subset] = {who: {k: v for k, v in evaluate_species(w, test_plates).items() if k != "rows"}
+                                  for who, w in (("actual", BASELINE_PT), ("nuevo", BEST))}
+    print(f"{'Test':<14}{'Modelo':<8}{'Placas':>7}{'Correctas':>10}{'Colonias':>9}{'Por colonia':>12}")
+    for subset, r in COMPARISON.items():
+        for who in ("actual", "nuevo"):
+            m = r[who]
+            print(f"{subset:<14}{who:<8}{m['placas']:>7}{m['placas_ok']:>10}{m['colonias']:>9}{100 * m['top1']:>10.1f} %")
+
+    # Regla: el nuevo no puede acertar menos placas ni menos colonias en las placas base y, si hay datos nuevos,
+    # tiene que identificarlos mejor. Sin datos nuevos, tiene que mejorar el acierto por colonia en las base.
+    reasons, notes = [], []
+    base = COMPARISON.get("base")
+    extras = {k: v for k, v in COMPARISON.items() if k != "base"}
+    if not COMPARISON:
+        reasons.append("no hay placas de test con las que comparar")
+    if base:
+        a, n = base["actual"], base["nuevo"]
+        if n["placas_ok"] < a["placas_ok"]:
+            reasons.append(f"acierta menos placas base ({a['placas_ok']} → {n['placas_ok']} de {n['placas']})")
+        if n["top1"] < a["top1"] - TOL_TOP1:
+            reasons.append(f"acierta menos colonias en las placas base ({100 * a['top1']:.1f} % → {100 * n['top1']:.1f} %)")
+        if not extras and n["top1"] <= a["top1"]:
+            reasons.append("sin datos nuevos, tampoco mejora el acierto por colonia en las placas base")
+    for subset, r in extras.items():
+        a, n = r["actual"], r["nuevo"]
+        if (n["placas_ok"], n["top1"]) <= (a["placas_ok"], a["top1"]):
+            reasons.append(f"no identifica mejor «{subset}» (placas {a['placas_ok']} → {n['placas_ok']} de {n['placas']}, "
+                           f"colonias {100 * a['top1']:.1f} % → {100 * n['top1']:.1f} %)")
+        if n["placas"] < 10:
+            notes.append(f"«{subset}» solo tiene {n['placas']} placa(s) de test: su resultado es poco fiable")
+    for src in EXTRA_SOURCES:
+        if not TEST_EXTRA.get(src[0]):
+            notes.append(f"«{src[0]}» tiene tan pocas placas por especie que ninguna quedó para test")
+    VERDICT = "conservar" if reasons else "reemplazar"
+    print()
+    if VERDICT == "reemplazar":
+        print("✅ El clasificador NUEVO es mejor: se puede reemplazar el actual.")
+    else:
+        print("❌ CONSERVA el clasificador actual. El nuevo:")
+        for r in reasons:
+            print("   ·", r)
+    for n in notes:
+        print("⚠️", n)
+    (WORK / "comparacion_especies.json").write_text(json.dumps(
+        {"veredicto": VERDICT, "motivos": reasons, "avisos": notes, "resultados": COMPARISON},
+        indent=2, ensure_ascii=False), encoding="utf-8")"""
+
+EXPORT = """# 9. Exportar para Bioyologic
 out = WORK / "bioyologic_species.pt"
 shutil.copy(BEST, out)
 info = {v["species"]: {"gram": v["gram"], "agar": v["agar"]} for v in SPECIES_MAP.values()}
+for sp in CLASSES:   # especies nuevas que llegaron con los datos adicionales
+    if sp not in info:
+        info[sp] = EXTRA_INFO.get(sp, {"gram": "", "agar": ""})
+        if sp not in EXTRA_INFO:
+            print(f"⚠️ Falta el Gram y el medio de «{sp}» en EXTRA_INFO: la app los mostrará vacíos.")
 (WORK / "bioyologic_species.json").write_text(json.dumps({
     "pad": PAD, "imgsz": IMGSZ, "classes": [names[i].replace("_", " ") for i in range(len(names))],
-    "species_info": info, "datasets": [s[0] for s in SOURCES],
+    "species_info": info, "datasets": [s[0] for s in SOURCES] + [s[0] for s in EXTRA_SOURCES],
 }, indent=1, ensure_ascii=False))
 # Un solo archivo: Chrome bloquea las descargas múltiples automáticas.
 import zipfile
@@ -185,14 +332,30 @@ bundle = WORK / "bioyologic_species.zip"
 with zipfile.ZipFile(bundle, "w") as z:
     z.write(out, out.name)
     z.write(WORK / "bioyologic_species.json", "bioyologic_species.json")
+    if (WORK / "comparacion_especies.json").exists():
+        z.write(WORK / "comparacion_especies.json", "comparacion_especies.json")
+if VERDICT == "conservar":
+    print("⚠️ Este clasificador NO superó al actual (celda 8): no lo copies a models/. Se descarga solo para revisarlo.")
 try:
     from google.colab import files
     files.download(str(bundle))
 except ImportError:
     print("Copia manualmente:", bundle)"""
 
-CELLS = [("markdown", INTRO), ("code", det.SETUP), ("code", CONFIG), ("code", det.DOWNLOAD),
-         ("code", CROPS), ("code", PREVIEW), ("code", TRAIN), ("code", EVAL), ("code", EXPORT)]
+OUTRO = """## Siguiente paso
+**Solo si la celda 8 dice que el clasificador nuevo es mejor** (o si no había uno actual con el que comparar):
+
+1. Copia `bioyologic_species.pt` y `bioyologic_species.json` en `Bioyologic/models/`, sustituyendo los anteriores.
+2. Ejecuta `python backend/scripts/export_onnx.py` (el servidor usa la versión ONNX) y las pruebas del backend.
+3. Si añadiste **especies nuevas**, agrégalas a la biblioteca de la app (`backend/bioyologic/library.py`): una prueba comprueba que cada especie del clasificador tiene su ficha.
+4. Actualiza las cifras de `MODEL_CARD.md` y del `README.md` con las de `comparacion_especies.json`, y añade los datos nuevos a `THIRD_PARTY_LICENSES.md` si son de terceros.
+5. Sube el cambio y actualiza el servidor.
+
+Si la celda 8 dice que conserves el clasificador actual, no cambies nada."""
+
+CELLS = [("markdown", INTRO), ("code", det.SETUP), ("code", CONFIG), ("code", det.DOWNLOAD), ("code", det.EXTRAS),
+         ("code", CROPS), ("code", PREVIEW), ("code", TRAIN), ("code", EVAL), ("code", COMPARE), ("code", EXPORT),
+         ("markdown", OUTRO)]
 
 
 def build() -> dict:

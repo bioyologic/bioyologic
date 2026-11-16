@@ -63,7 +63,17 @@ Los datos se separan **por placa** (80 % entrenamiento, 10 % validación, 10 % t
 
 ## Reentrenar o mejorar
 
-1. Añadir fotos anotadas (formato COCO) de otros laboratorios y medios.
-2. Ejecutar los notebooks de `training/`.
-3. Copiar los modelos a `models/`.
-4. Ejecutar `python backend/scripts/export_onnx.py` para generar las versiones ONNX.
+Los modelos ya aciertan casi siempre en fotos como las de sus datasets. Lo que más los mejora no es más cantidad de esos datos, sino **fotos distintas**: otros laboratorios, otras cámaras (celular) y, sobre todo, las mismas especies en otros medios de cultivo.
+
+1. **Reunir fotos anotadas.** Dos fuentes:
+   - *Las placas corregidas en la app.* Cada conteo corregido a mano (o aprobado en revisión) es una placa anotada por una persona. Se exportan en el servidor con:
+
+     ```bash
+     docker compose exec -T -w /srv/backend bioyologic python -m bioyologic.manage export-coco --email CORREO --proyecto "E. coli" --especie "Escherichia coli"
+     ```
+
+     Queda en `deploy/data/entrenamiento.zip`. Sin `--especie` sirve para el detector; con ella, también para el clasificador. Solo exporta las fotos de esa cuenta: para entrenar con las de otra persona hace falta su permiso.
+   - *Otro dataset público*, en formato COCO o AGAR (Majchrowska *et al.* 2021). Hay que revisar su licencia y citarlo en `THIRD_PARTY_LICENSES.md`.
+2. **Entrenar en Google Colab.** Sube los datos a Google Drive, abre el notebook de `training/` y añade cada fuente a la lista `EXTRA` de la celda 2.
+3. **Mirar el veredicto.** Los datos nuevos nunca cambian las placas de test de los dos datasets base. La celda 8 mide el modelo nuevo y el actual sobre esas mismas placas y sobre las de test de los datos nuevos, y dice si conviene reemplazarlo: el nuevo no puede empeorar en las placas base y tiene que mejorar en las nuevas.
+4. **Solo si es mejor:** copiar los modelos a `models/`, ejecutar `python backend/scripts/export_onnx.py` para generar las versiones ONNX, actualizar las cifras de esta ficha y desplegar.
